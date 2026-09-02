@@ -255,6 +255,11 @@ def test_distributed_solve(n: int, m: int, solver_spec: WFSolverSpec):
         pytest.skip(
             f"{solver_spec.solver_type.__name__} does not support distributed solving."
         )
+    import numpy as np
+
+    arr_send = np.arange(comm.size, dtype=xp.float64) + 1.0
+    arr_recv = np.empty(comm.size, dtype=xp.float64)
+    comm.Alltoall(arr_send, arr_recv)
 
     a, b = None, None
     if comm.rank == 0:

@@ -41,7 +41,7 @@ build quatrex:
     SLURM_JOB_NUM_NODES: 1
     SLURM_NTASKS: 1
     SLURM_GPUS_PER_TASK: 1
-    SLURM_TIMELIMIT: '00:20:00'
+    SLURM_TIMELIMIT: '00:10:00'
     SLURM_PARTITION: normal
 
 test quatrex single:
@@ -70,6 +70,8 @@ test quatrex dist:
   variables:
     SLURM_JOB_NUM_NODES: 2
     SLURM_NTASKS: 6
+    MPIR_CVAR_CH4_OFI_ENABLE_HMEM: 1
+    MPIR_CVAR_NOLOCAL: 1  # Avoid intra-node issues with GPU-aware MPI.
 
 test qttools dist:
   extends: .test-common
@@ -78,3 +80,5 @@ test qttools dist:
   variables:
     SLURM_JOB_NUM_NODES: 2
     SLURM_NTASKS: 6
+    MPIR_CVAR_CH4_OFI_ENABLE_HMEM: 1
+    MPIR_CVAR_NOLOCAL: 1  # Avoid intra-node issues with GPU-aware MPI.
