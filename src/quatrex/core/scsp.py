@@ -67,10 +67,9 @@ class SCSP:
         """
         if config.formalism == "wf":
             from quatrex.core.qtbm import QTBM
-            from quatrex.device import Device
+            from quatrex.device import create_device
 
-            device = Device(config)
-            device.validate_contacts()
+            device = create_device(config)
             return QTBM(device, config)
 
         if config.formalism == "negf":

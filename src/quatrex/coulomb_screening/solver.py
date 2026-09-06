@@ -19,10 +19,10 @@ from qttools.toeplitz.toeplitz import (
 from qttools.utils.mpi_utils import get_section_sizes
 from qttools.utils.solvers_utils import get_batches
 from qttools.utils.sparse_utils import product_sparsity_pattern_dsdbsparse
+from quatrex.contact.scba import get_inverse_order, order_block
 from quatrex.core.config import QuatrexConfig
 from quatrex.core.subsystem import SubsystemSolver
 from quatrex.core.utils import compute_num_connected_blocks
-from quatrex.device.contact import get_inverse_order, order_block
 
 profiler = Profiler()
 

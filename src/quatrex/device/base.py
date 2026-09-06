@@ -1,6 +1,6 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the quatrex package.
 
-"""Includes the device class for electronic transport calculations."""
+"""Includes the base device class for electronic transport calculations."""
 
 import warnings
 from collections import defaultdict
@@ -9,19 +9,16 @@ from pathlib import Path
 import numpy as np
 from mpi4py.MPI import COMM_WORLD as comm
 
-from qttools import NDArray, sparse, xp
+from qttools import NDArray, xp
+from qttools.datastructures.dsdbsparse import DSDBSparse
 from qttools.utils.gpu_utils import get_host
 from qttools.utils.mpi_utils import distributed_load
+from quatrex.contact import BaseContact
 from quatrex.core.config import QuatrexConfig
-from quatrex.device.contact import Contact
-from quatrex.device.inputs import (
-    create_coordinate_grid,
-    distributed_read_xyz,
-    load_matrices,
-)
+from quatrex.device.inputs import create_coordinate_grid, distributed_read_xyz
 
 
-class Device:
+class BaseDevice:
     """A quantum device for electronic transport calculations.
 
     Parameters
@@ -34,70 +31,68 @@ class Device:
     ----------
     config : QuatrexConfig
         Reference to the configuration object.
-    hamiltonians : dict
-        Dictionary of Hamiltonian matrices indexed by (i, j, k) lattice
-        vectors. Keys are tuples representing the lattice vector
-        indices, values are sparse CSR matrices.
-    overlap_matrices : dict
-        Dictionary of overlap matrices with the same indexing as
-        hamiltonians. For orthogonal basis sets, defaults to identity
-        matrices.
-    gamma_only : bool
-        True if only the Gamma point (0,0,0) Hamiltonian is available,
-        indicating that k-point calculations are not possible.
+    orbital_coordinates : NDArray
+        Array of orbital coordinates.
     atom_coordinates : NDArray
         Array of atomic coordinates.
     atomic_species : NDArray
-        Array of atom symbols for each atom. NOTE: This array is always on the
-        host since CuPy does not support string arrays.
+        Array of atom symbols for each atom. NOTE: This array is always
+        on the host since CuPy does not support string arrays.
     orbital_offsets : NDArray
         Array of cumulative orbital counts, used to map from atoms to
         orbitals. orbital_offsets[i] gives the starting orbital index
         for atom i.
     potential : NDArray, optional
-        Array of electrostatic potential for each orbital.
-        Can be either None if no potential is provided or a 1D array
-        where the 1D index corresponds to the orbital index or the
-        atom index depending on the shape of the provided potential.
-    contacts : list[Contact]
+        Array of electrostatic potential for each orbital. Can be either
+        None if no potential is provided or a 1D array where the 1D
+        index corresponds to the orbital index or the atom index
+        depending on the shape of the provided potential.
+    contacts : list[BaseContact]
         List of Contact objects representing the semi-infinite leads
         connected to this device.
+    hamiltonians : dict | DSDBSparse | None
+        Hamiltonian matrices in either real space (QTBM) or k-space
+        (SCBA).
+    overlap_matrices : dict | DSDBSparse | None
+        Overlap matrices in either real space (QTBM) or k-space (SCBA).
 
     """
 
     def __init__(self, config: QuatrexConfig) -> None:
-        """Initializes a Device object from configuration."""
+        """Initializes a BaseDevice object from configuration."""
 
         self.config = config
         self.device_config = config.device
 
-        self._init_hamiltonian()
         (
             self.orbital_coordinates,
             self.atom_coordinates,
             self.atomic_species,
             self.lattice_vectors,
-        ) = self.load_structure(config)
-        # TODO QTBM Device/Contact currently assumes that these quantities are on the host
+        ) = self._load_structure(config)
+
+        # TODO Device/Contact currently assumes that these quantities are on the host
         self.atom_coordinates = get_host(self.atom_coordinates)
 
         self._init_orbitals()
-        self.potential = self.load_potential(
+
+        self.potential = self._load_potential(
             self.config.input_dir,
             self.atom_coordinates,
             self.atomic_species,
             self.device_config.num_orbitals_per_atom,
         )
-        self._add_contacts()
 
-        if comm.rank == 0:
-            print(
-                f"Device initialized with {len(self.contacts)} contacts.",
-                flush=True,
-            )
+        # Child classes will initialize the Hamiltonian and contacts in
+        # their own init methods
+        self.contacts: list[BaseContact] = []
+        self.hamiltonians: dict | DSDBSparse | None = None
+        # TODO: Should be `None` for QTBM if the basis is orthogonal.
+        # No identity matrix should be allocated.
+        self.overlap_matrices: dict | DSDBSparse | None = None
 
     @staticmethod
-    def load_potential(
+    def _load_potential(
         input_dir: Path,
         atom_coordinates: NDArray,
         atomic_species: NDArray,
@@ -105,9 +100,9 @@ class Device:
     ) -> NDArray:
         """Loads electrostatic potential data from input files.
 
-        Attempts to load the electrostatic potential from potential.npy in the
-        input directory. The potential can be provided either at the atomic
-        level or at the orbital level.
+        Attempts to load the electrostatic potential from potential.npy
+        in the input directory. The potential can be provided either at
+        the atomic level or at the orbital level.
 
         Parameters
         ----------
@@ -116,18 +111,19 @@ class Device:
         atom_coordinates : NDArray
             Array of atomic coordinates.
         atomic_species : NDArray
-            Array of atom symbols for each atom. NOTE: This array is always on the
-            host since CuPy does not support string arrays.
+            Array of atom symbols for each atom. NOTE: This array is
+            always on the host since CuPy does not support string
+            arrays.
         num_orbitals_per_atom : dict[str, int]
-            Dictionary mapping atomic species to the number of orbitals per
-            atom.
+            Dictionary mapping atomic species to the number of orbitals
+            per atom.
 
         Returns
         -------
         NDArray
-            The electrostatic potential array. If no potential file is found,
-            returns an array of zeros with length equal to the total number of
-            orbitals.
+            The electrostatic potential array. If no potential file is
+            found, returns an array of zeros with length equal to the
+            total number of orbitals.
 
 
         """
@@ -154,7 +150,7 @@ class Device:
         return potential
 
     @staticmethod
-    def load_structure(
+    def _load_structure(
         config: QuatrexConfig,
     ) -> tuple[NDArray, NDArray, NDArray, NDArray]:
         """Loads the orbital coordinates, atom coordinates, atomic
@@ -219,105 +215,6 @@ class Device:
 
         return orbital_coordinates, atom_coordinates, atomic_species, lattice_vectors
 
-    def _init_hamiltonian(self) -> None:
-        """Initializes Hamiltonian and overlap matrices from files.
-
-        Loads sparse matrices from .h5 files in the input directory.
-        Files should be named "hamiltonian.h5" and
-        "overlap.h5" where the keys are strings of [i,j,k]
-        representing lattice vector indices.
-
-        For missing overlap matrices, identity matrices are assumed
-        (orthogonal basis). The (0,0,0) Hamiltonian matrix is mandatory
-        and its absence raises an error.
-
-        """
-
-        self.gamma_only = False
-
-        if not (self.config.input_dir / "hamiltonian.h5").exists():
-            raise ValueError("Hamiltonian matrix not found.")
-
-        self.hamiltonians = load_matrices(
-            self.config, "hamiltonian", force_complex=False
-        )
-
-        for r, h_r in self.hamiltonians.items():
-            if not h_r.shape[0] == h_r.shape[1]:
-                raise ValueError(
-                    f"Hamiltonian matrix at index {r} is not square. "
-                    f"Shape: {h_r.shape}"
-                )
-
-            # assert all hamiltonians are sparse matrices
-            if not isinstance(h_r, sparse.spmatrix):
-                raise TypeError(
-                    f"Hamiltonian matrix at index {r} is not a sparse matrix.\n"
-                    f"Matrix type: {type(h_r)}"
-                )
-
-            self.hamiltonians[r] = sparse.csr_matrix(self.hamiltonians[r])
-
-            if self.hamiltonians[r].dtype in [np.complex64, np.complex128]:
-                self.matrices_complex = True
-
-            if not self.hamiltonians[r].has_canonical_format:
-                self.hamiltonians[r].sum_duplicates()
-                self.hamiltonians[r].sort_indices()
-
-        size = self.hamiltonians[(0, 0, 0)].shape[0]
-
-        if (self.config.input_dir / "overlap.h5").exists():
-            self.overlap_matrices = load_matrices(self.config, "overlap")
-
-            for r in self.overlap_matrices:
-                if (
-                    self.overlap_matrices[r].shape[0]
-                    != self.overlap_matrices[r].shape[1]
-                ):
-                    raise ValueError(
-                        f"Overlap matrix at index {r} is not square. "
-                        f"Shape: {self.overlap_matrices[r].shape}"
-                    )
-
-                if self.overlap_matrices[r].shape != (size, size):
-                    raise ValueError(
-                        f"Overlap matrix at index {r} has incompatible "
-                        f"shape with Hamiltonian. Expected {(size, size)}, "
-                        f"got {self.overlap_matrices[r].shape}."
-                    )
-
-                # assert all overlap_matrices are sparse matrices
-                if not isinstance(self.overlap_matrices[r], sparse.spmatrix):
-                    raise TypeError(
-                        f"Overlap matrix at index {r} is not a sparse matrix."
-                    )
-
-                self.overlap_matrices[r] = sparse.csr_matrix(self.overlap_matrices[r])
-
-                if self.overlap_matrices[r].dtype in [np.complex64, np.complex128]:
-                    self.matrices_complex = True
-
-                if not self.overlap_matrices[r].has_canonical_format:
-                    self.overlap_matrices[r].sum_duplicates()
-                    self.overlap_matrices[r].sort_indices()
-
-        else:
-            if comm.rank == 0:
-                warnings.warn(
-                    "No overlap matrices found. Assuming identity matrix.",
-                )
-            self.overlap_matrices = {
-                (0, 0, 0): sparse.eye(size, dtype=xp.float64, format="csr")
-            }
-
-        if comm.rank == 0:
-            print(f"Loaded {len(self.hamiltonians)} Hamiltonian matrices", flush=True)
-            print(f"Loaded {len(self.overlap_matrices)} overlap matrices", flush=True)
-
-        if len(self.hamiltonians) == 1:
-            self.gamma_only = True
-
     def _init_orbitals(self) -> None:
         """Initializes the orbital indexing system for the device.
 
@@ -340,23 +237,7 @@ class Device:
         # Create a vector with the starting orbital for each atom
         self.orbital_offsets = np.hstack(([0], np.cumsum(orbitals_per_atom)))
 
-    def _add_contacts(self):
-        """Initializes and attaches contacts to the device.
-
-        Creates Contact objects for each contact defined in the device
-        configuration. Each contact represents a semi-infinite lead
-        connected to the finite device region, providing boundary
-        conditions for transport calculations.
-
-        """
-
-        contacts = []
-        for contact_config in self.device_config.contacts:
-            contacts.append(Contact(device=self, contact_config=contact_config))
-
-        self.contacts = contacts
-
-    def validate_contacts(self):
+    def _validate_contacts(self):
         """Validates that all required contact parameters are set.
 
         Raises warnings if any required parameters are missing. If the

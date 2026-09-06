@@ -14,7 +14,7 @@ from qttools.comm import comm
 from qttools.utils.gpu_utils import get_host
 from quatrex.bandstructure.contact import contact_band_structure
 from quatrex.core.config import QuatrexConfig
-from quatrex.device import Device
+from quatrex.device import BaseDevice
 from quatrex.device.inputs import assemble_matrix
 from quatrex.grid import monkhorst_pack
 
@@ -41,7 +41,7 @@ def _plot(
     ax.scatter(k_repeated, get_host(e_k), color="blue", s=10)
 
 
-def _plot_wf(config: QuatrexConfig, axes: plt.Axes, device: Device) -> None:
+def _plot_wf(config: QuatrexConfig, axes: plt.Axes, device: BaseDevice) -> None:
     """Plots the contact band structure for a wavefunction simulation.
 
     Parameters
@@ -50,7 +50,7 @@ def _plot_wf(config: QuatrexConfig, axes: plt.Axes, device: Device) -> None:
         The quatrex simulation configuration.
     axes : plt.Axes
         The axes to plot on.
-    device : Device
+    device : BaseDevice
         The device object.
 
     """
@@ -64,9 +64,6 @@ def _plot_wf(config: QuatrexConfig, axes: plt.Axes, device: Device) -> None:
             "but more than one k-point is configured."
         )
 
-    hamiltonians = device.hamiltonians
-    overlaps = device.overlap_matrices
-
     # NOTE: Not the most efficient code since we do naive loops. The
     # code could be potentially batched, but this should not be a
     # bottleneck since it is only pre-processing.
@@ -74,17 +71,6 @@ def _plot_wf(config: QuatrexConfig, axes: plt.Axes, device: Device) -> None:
         for n, (contact, contact_config) in enumerate(
             zip(device.contacts, config.device.contacts)
         ):
-            h_xx = contact.get_contact_blocks(
-                matrices=hamiltonians,
-                kpoint=kpoint,
-                upper=True,
-            )
-            s_xx = contact.get_contact_blocks(
-                matrices=overlaps,
-                kpoint=kpoint,
-                upper=True,
-            )
-
             kpoints_transport = xp.linspace(
                 -xp.pi,
                 xp.pi,
@@ -93,8 +79,6 @@ def _plot_wf(config: QuatrexConfig, axes: plt.Axes, device: Device) -> None:
             )
 
             e_k = contact.compute_contact_bandstructure(
-                h_xx=h_xx,
-                s_xx=s_xx,
                 kpoint=kpoint,
                 kpoints_transport=kpoints_transport,
             )
@@ -184,7 +168,7 @@ def _plot_negf(config: QuatrexConfig, axes: plt.Axes) -> None:
 
 def plot_contact_band_structure(
     config: QuatrexConfig,
-    device: Device | None = None,
+    device: BaseDevice | None = None,
 ) -> None:
     """Plots the contact band structure for a given quatrex configuration.
 
@@ -192,7 +176,7 @@ def plot_contact_band_structure(
     ----------
     config : QuatrexConfig
         The quatrex simulation configuration.
-    device : Device | None
+    device : BaseDevice | None
         The device object. It is `None` for NEGF simulations.
 
     """

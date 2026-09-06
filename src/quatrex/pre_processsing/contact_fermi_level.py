@@ -10,12 +10,12 @@ import tomlkit
 from qttools.comm import comm
 from quatrex.config import merge_toml
 from quatrex.core.config import QuatrexConfig, _parse_config
-from quatrex.device import Device
+from quatrex.device import BaseDevice
 
 
 def pre_process_fermi_level(
     config: QuatrexConfig,
-    device: Device | None = None,
+    device: BaseDevice | None = None,
 ) -> None:
     """Computes the Fermi level of the contacts for a given quatrex
     configuration.
@@ -24,7 +24,7 @@ def pre_process_fermi_level(
     ----------
     config : QuatrexConfig
         The quatrex simulation configuration.
-    device : Device | None
+    device : BaseDevice | None
         The device object. It is `None` for NEGF simulations.
 
     """

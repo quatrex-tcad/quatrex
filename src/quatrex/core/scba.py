@@ -19,7 +19,7 @@ from quatrex.core.observables import current_conservation, density
 from quatrex.core.transport import TransportSolver
 from quatrex.core.utils import compute_num_connected_blocks, compute_sparsity_pattern
 from quatrex.coulomb_screening import CoulombScreeningSolver, PCoulombScreening
-from quatrex.device import Device
+from quatrex.device import BaseDevice
 from quatrex.device.inputs import assemble_matrix, get_block_sizes
 from quatrex.electron import (
     ElectronSolver,
@@ -49,7 +49,7 @@ class SCBAData:
         """Initializes the SCBA data."""
         # Load orbital positions, energy vector and block-sizes.
 
-        grid, __, atomic_species, __ = Device.load_structure(config)
+        grid, __, atomic_species, __ = BaseDevice._load_structure(config)
         self.orbitals_per_atom = [
             config.device.num_orbitals_per_atom.get(s, 1) for s in atomic_species
         ]

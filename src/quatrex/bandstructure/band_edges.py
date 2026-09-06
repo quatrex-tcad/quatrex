@@ -12,8 +12,8 @@ from qttools.datastructures import DSDBSparse
 from qttools.datastructures.dsdbsparse import _block_view
 from qttools.kernels.linalg import eigvalsh
 from qttools.utils.mpi_utils import get_section_sizes
+from quatrex.contact.scba import order_block, order_vector
 from quatrex.core.config import BandEdgeConfig
-from quatrex.device.contact import order_block, order_vector
 
 if xp.__name__ == "numpy":
     from scipy.signal import find_peaks

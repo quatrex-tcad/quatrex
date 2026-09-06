@@ -2,7 +2,27 @@
 
 """Includes the device and contact classes."""
 
-from quatrex.device.contact import Contact
-from quatrex.device.device import Device
+from quatrex.core.config import QuatrexConfig
+from quatrex.device.base import BaseDevice
+from quatrex.device.qtbm import QTBMDevice
+from quatrex.device.scba import SCBADevice
 
-__all__ = ["Contact", "Device"]
+
+def create_device(
+    config: QuatrexConfig,
+    validate_contacts: bool = True,
+) -> BaseDevice:
+    if config.formalism == "wf":
+        device = QTBMDevice(config)
+    elif config.formalism == "scba":
+        device = SCBADevice(config)
+    else:
+        raise ValueError(f"Unknown formalism {config.formalism}")
+
+    if validate_contacts:
+        device._validate_contacts()
+
+    return device
+
+
+__all__ = ["create_device", "BaseDevice", "QTBMDevice", "SCBADevice"]

@@ -24,11 +24,11 @@ from quatrex.bandstructure.contact import (
     contact_doping_density,
     contact_fermi_level,
 )
+from quatrex.contact.scba import get_inverse_order, order_block
 from quatrex.core.config import QuatrexConfig
 from quatrex.core.statistics import fermi_dirac
 from quatrex.core.subsystem import SubsystemSolver
-from quatrex.device import Device
-from quatrex.device.contact import get_inverse_order, order_block
+from quatrex.device import BaseDevice
 from quatrex.device.inputs import assemble_matrix
 
 profiler = Profiler()
@@ -630,8 +630,8 @@ class ElectronSolver(SubsystemSolver):
         # Load the potential.
         # TODO: The structure should not be reloaded here.
         # This will be fixed when the device is unified.
-        __, atom_coordinates, atomic_species, __ = Device.load_structure(config)
-        self.potential = Device.load_potential(
+        __, atom_coordinates, atomic_species, __ = BaseDevice._load_structure(config)
+        self.potential = BaseDevice._load_potential(
             config.input_dir,
             atom_coordinates,
             atomic_species,
