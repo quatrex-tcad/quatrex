@@ -28,9 +28,7 @@ def pre_process(config: QuatrexConfig):
             "The 'pre-process' command can only be run on a single process."
         )
 
-    device = None
-    if config.formalism == "wf":
-        device = create_device(config)
+    device = create_device(config)
 
     if config.pre_process.compute_fermi_level:
         pre_process_fermi_level(config, device)

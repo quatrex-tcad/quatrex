@@ -46,20 +46,20 @@ def version_callback(value: bool):
         raise typer.Exit()
 
 
-def _run_wf(config):
+def _run_wf(config, device):
     """Runs quatrex with the given configuration.
 
     Parameters
     ----------
     config : QuatrexConfig
         The main quatrex configuration.
+    device : BaseDevice
+        The device object to be used in the simulation.
 
     """
     from quatrex.core.qtbm import QTBM
-    from quatrex.device import create_device
 
-    device = create_device(config)
-    qtbm = QTBM(device, config)
+    qtbm = QTBM(config, device)
 
     tic = time.perf_counter()
     qtbm.run()
@@ -69,19 +69,21 @@ def _run_wf(config):
         typer.secho(f"Leaving QTBM after: {(toc - tic):.2f} s")
 
 
-def _run_negf(config):
+def _run_negf(config, device):
     """Runs quatrex with the given configuration using SCBA.
 
     Parameters
     ----------
     config : QuatrexConfig
         The main quatrex configuration.
+    device : BaseDevice
+        The device object to be used in the simulation.
 
     """
 
     from quatrex.core.scba import SCBA
 
-    scba = SCBA(config)
+    scba = SCBA(config, device)
 
     tic = time.perf_counter()
     scba.run()
@@ -91,18 +93,20 @@ def _run_negf(config):
         typer.secho(f"Leaving SCBA after: {(toc - tic):.2f} s")
 
 
-def _run_scsp(config):
+def _run_scsp(config, device):
     """Runs the self-consistent Schrödinger-Poisson solver.
 
     Parameters
     ----------
     config : QuatrexConfig
         The main quatrex configuration.
+    device : BaseDevice
+        The device object to be used in the simulation.
 
     """
     from quatrex.core.scsp import SCSP
 
-    scsp = SCSP(config)
+    scsp = SCSP(config, device)
 
     tic = time.perf_counter()
     scsp.run()
@@ -215,6 +219,7 @@ def run(
 
         from qttools.profiling import Profiler
         from quatrex.core.config import parse_config, setup_context
+        from quatrex.device import create_device
 
         profiler = Profiler()
 
@@ -230,12 +235,14 @@ def run(
         ):
             pprint(threadpool_info()) if comm.rank == 0 else None
 
+            device = create_device(config)
+
             if config.scsp is not None:
-                _run_scsp(config)
+                _run_scsp(config, device)
             elif config.formalism == "wf":
-                _run_wf(config)
+                _run_wf(config, device)
             elif config.formalism == "negf":
-                _run_negf(config)
+                _run_negf(config, device)
             else:
                 raise NotImplementedError(
                     f"Formalism '{config.formalism}' is not implemented."

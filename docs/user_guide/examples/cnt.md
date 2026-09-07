@@ -242,13 +242,15 @@ deformation_potential = 15e-3 # eV
     transport_direction = "a"
     block_size = 32
 
+        [[device.contacts]]
+        name = "left"
+        fermi_level = -3.6
+
+        [[device.contacts]]
+        name = "right"
+        fermi_level = -3.601
+
     [electron]
-    left_contact.name = "left"
-    left_contact.fermi_level = -3.6
-
-    right_contact.name = "right"
-    right_contact.fermi_level = -3.601
-
     energy_window_min = -6.5
     energy_window_max = -1.0
     energy_window_num = 1000

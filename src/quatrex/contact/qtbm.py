@@ -111,6 +111,9 @@ class QTBMContact(BaseContact):
         The configuration object containing the contact settings such as
         lattice vectors, origin, transport direction, and Fermi level
         information.
+    sparsity_pattern : sparse.spmatrix
+        The sparsity pattern of the device Hamiltonian, used to identify
+        the contact orbitals and their connectivity.
 
     Attributes
     ----------
@@ -163,7 +166,8 @@ class QTBMContact(BaseContact):
         # with either a config per contact or a config per contact.
         # This will be simpler when unifying QTBM and SCBA.
         self.obc_solver = self._configure_obc(
-            self.device.config.electron.obc, self.device.config.compute.nevp
+            self.device.config.electron.obc,
+            self.device.config.compute.nevp,
         )
 
     def get_coupling_matrix(
@@ -656,7 +660,9 @@ class QTBMContact(BaseContact):
         return obc_result
 
     def _configure_obc(
-        self, obc_config: OBCConfig, nevp_config: NEVPConfig
+        self,
+        obc_config: OBCConfig,
+        nevp_config: NEVPConfig,
     ) -> obc.Spectral:
         """Configures the OBC solver.
 
@@ -686,7 +692,7 @@ class QTBMContact(BaseContact):
             nevp = self._configure_nevp(obc_config, nevp_config)
             obc_solver = obc.Spectral(
                 nevp=nevp,
-                block_sections=self.transport_repetitions,  # WARNING: overrides config
+                block_sections=self.transport_repetitions,
                 min_decay=obc_config.min_decay,
                 max_decay=obc_config.max_decay,
                 num_ref_iterations=obc_config.num_ref_iterations,
@@ -704,7 +710,11 @@ class QTBMContact(BaseContact):
 
         return obc_solver
 
-    def _configure_nevp(self, obc_config: OBCConfig, nevp_config: NEVPConfig) -> NEVP:
+    def _configure_nevp(
+        self,
+        obc_config: OBCConfig,
+        nevp_config: NEVPConfig,
+    ) -> NEVP:
         """Configures the Nonlinear Eigenvalue Problem (NEVP) solver.
 
         Parameters

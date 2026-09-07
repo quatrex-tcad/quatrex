@@ -13,14 +13,13 @@ from qttools import NDArray, xp
 from qttools.comm import comm
 from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import get_host
-from qttools.utils.mpi_utils import distributed_load, get_section_sizes
+from qttools.utils.mpi_utils import distributed_load
 from quatrex.core.config import QuatrexConfig
 from quatrex.core.observables import current_conservation, density
 from quatrex.core.transport import TransportSolver
-from quatrex.core.utils import compute_num_connected_blocks, compute_sparsity_pattern
 from quatrex.coulomb_screening import CoulombScreeningSolver, PCoulombScreening
-from quatrex.device import BaseDevice
-from quatrex.device.inputs import assemble_matrix, get_block_sizes
+from quatrex.device import BaseDevice, SCBADevice
+from quatrex.device.inputs import get_block_sizes
 from quatrex.electron import (
     ElectronSolver,
     SigmaCoulombScreening,
@@ -42,10 +41,16 @@ class SCBAData:
     ----------
     config : QuatrexConfig
         The Quatrex configuration.
+    device : SCBADevice
+        The device object to be used in the simulation.
+    electron_energies : NDArray
+        The electron energies for the SCBA calculation.
 
     """
 
-    def __init__(self, config: QuatrexConfig, electron_energies: NDArray) -> None:
+    def __init__(
+        self, config: QuatrexConfig, device: SCBADevice, electron_energies: NDArray
+    ) -> None:
         """Initializes the SCBA data."""
         # Load orbital positions, energy vector and block-sizes.
 
@@ -58,55 +63,11 @@ class SCBAData:
 
         kpoint_grid = config.device.kpoint_grid
         # Find the maximum interaction cutoff.
-        max_interaction_cutoff = 0.0
-        if config.scba.coulomb_screening:
-            max_interaction_cutoff = max(
-                max_interaction_cutoff,
-                config.coulomb_screening.interaction_cutoff,
-            )
-        if config.scba.photon:
-            max_interaction_cutoff = max(
-                max_interaction_cutoff,
-                config.photon.interaction_cutoff,
-            )
-        if config.scba.phonon:
-            max_interaction_cutoff = max(
-                max_interaction_cutoff,
-                config.phonon.interaction_cutoff,
-            )
-        if max_interaction_cutoff == 0.0:
-            raise NotImplementedError(
-                "At least one interaction must be enabled in the SCBA."
-                "Ballistic transport is not properly supported yet."
-            )
-
-        if comm.rank == 0:
-            print(f"Max Interaction Cutoff: {max_interaction_cutoff}", flush=True)
-
-        with profiler.profile_range(
-            label="SCBA: Sparsity Pattern", level="default", comm=comm
-        ):
-            # Determine the local slice of the data.
-            # NOTE: This is arrow-wise partitioning.
-            # TODO: Allow more options, e.g., block row-wise partitioning.
-            section_sizes, __ = get_section_sizes(len(block_sizes), comm.block.size)
-            section_offsets = np.hstack(([0], np.cumsum(section_sizes)))
-            block_offsets = np.hstack(([0], np.cumsum(block_sizes)))
-            start_idx = block_offsets[section_offsets[comm.block.rank]]
-            end_idx = block_offsets[section_offsets[comm.block.rank + 1]]
-
-            self.sparsity_pattern = compute_sparsity_pattern(
-                grid,
-                max_interaction_cutoff,
-                transport_direction=config.device.transport_direction,
-                start_idx=start_idx,
-                end_idx=end_idx,
-            )
 
         dsdbsparse_type = config.compute.dsdbsparse_type
 
         self.g_retarded = dsdbsparse_type.from_sparray(
-            sparray=self.sparsity_pattern.astype(xp.complex128),
+            sparray=device.sparsity_pattern.astype(xp.complex128),
             block_sizes=block_sizes,
             global_stack_shape=electron_energies.shape
             + tuple([k for k in kpoint_grid if k > 1]),
@@ -114,7 +75,7 @@ class SCBAData:
         )
 
         self.g_lesser = dsdbsparse_type.from_sparray(
-            sparray=self.sparsity_pattern.astype(xp.complex128),
+            sparray=device.sparsity_pattern.astype(xp.complex128),
             block_sizes=block_sizes,
             global_stack_shape=electron_energies.shape
             + tuple([k for k in kpoint_grid if k > 1]),
@@ -146,24 +107,9 @@ class SCBAData:
             if config.scba.symmetric:
                 self.p_retarded_hermitian.symmetry = "hermitian"
 
-            num_connected_blocks = config.coulomb_screening.num_connected_blocks
-            if num_connected_blocks == "auto":
-                num_connected_blocks = compute_num_connected_blocks(
-                    self.sparsity_pattern, block_sizes
-                )
-
-            if comm.rank == 0:
-                print(f"Number of connected blocks: {num_connected_blocks}", flush=True)
-
-            # TODO: This only works for constant block sizes.
-            coulomb_screening_block_sizes = (
-                block_sizes[: len(block_sizes) // num_connected_blocks]
-                * num_connected_blocks
-            )
-
             self.w_lesser = dsdbsparse_type.from_sparray(
-                sparray=self.sparsity_pattern.astype(xp.complex128),
-                block_sizes=coulomb_screening_block_sizes,
+                sparray=device.sparsity_pattern.astype(xp.complex128),
+                block_sizes=device.coulomb_block_sizes,
                 global_stack_shape=electron_energies.shape
                 + tuple([k for k in kpoint_grid if k > 1]),
                 symmetry="skew-hermitian" if config.scba.symmetric else None,
@@ -249,15 +195,23 @@ class SCBA(TransportSolver):
     config : QuatrexConfig
         Quatrex configuration object.
 
+    device : SCBADevice
+        The device object to be used in the simulation.
+
     """
 
-    def __init__(self, config: QuatrexConfig) -> None:
+    def __init__(self, config: QuatrexConfig, device: SCBADevice) -> None:
         """Initializes an SCBA instance."""
         self.config = config
 
+        self.device = device
         self.observables = Observables()
         electron_energies = xp.zeros((comm.size,))
-        self.data = SCBAData(config, electron_energies=electron_energies)  # dummy data
+        self.data = SCBAData(
+            config=config,
+            device=self.device,
+            electron_energies=electron_energies,
+        )  # dummy data
         self.mixing_factor = self.config.scba.mixing_factor
 
         # ----- Electrons ----------------------------------------------
@@ -283,25 +237,13 @@ class SCBA(TransportSolver):
             )
 
         self.electron_solver = ElectronSolver(
-            self.config,
-            self.electron_energies,
+            config=self.config,
+            device=self.device,
+            energies=self.electron_energies,
         )
 
         # ----- Coulomb screening --------------------------------------
         if self.config.scba.coulomb_screening:
-            # Load the Coulomb matrix.
-            coulomb_matrix, __ = assemble_matrix(
-                config=config,
-                matrix_name="coulomb_matrix",
-                sparsity_pattern=self.data.sparsity_pattern,
-                shift_kpoints=True,
-            )
-
-            # Make sure the Coulomb matrix is hermitian.
-            # TODO: Check that this is correct for kpoints.
-            if coulomb_matrix.symmetry is None:
-                coulomb_matrix.symmetrize("hermitian")
-            coulomb_matrix._data /= config.coulomb_screening.epsilon_r
 
             energies_path = self.config.input_dir / "coulomb_screening_energies.npy"
             if os.path.isfile(energies_path):
@@ -314,19 +256,19 @@ class SCBA(TransportSolver):
                 self.coulomb_screening_energies += 1e-6
 
             (
-                coulomb_matrix.dtranspose()
-                if coulomb_matrix.distribution_state != "nnz"
+                self.device.coulomb_matrix.dtranspose()
+                if self.device.coulomb_matrix.distribution_state != "nnz"
                 else None
             )
             self.sigma_fock = SigmaFock(
                 self.config,
-                coulomb_matrix,
+                self.device.coulomb_matrix,
                 self.electron_energies,
             )
             # Have to transpose the coulomb matrix back to the original distribution.
             (
-                coulomb_matrix.dtranspose()
-                if coulomb_matrix.distribution_state == "nnz"
+                self.device.coulomb_matrix.dtranspose()
+                if self.device.coulomb_matrix.distribution_state == "nnz"
                 else None
             )
 
@@ -337,9 +279,8 @@ class SCBA(TransportSolver):
             )
             self.coulomb_screening_solver = CoulombScreeningSolver(
                 self.config,
-                coulomb_matrix,
+                self.device,
                 self.coulomb_screening_energies,
-                sparsity_pattern=self.data.sparsity_pattern,
             )
             self.sigma_coulomb_screening = SigmaCoulombScreening(
                 self.config,
@@ -367,7 +308,9 @@ class SCBA(TransportSolver):
                 self.sigma_phonon = SigmaPhonon(config, self.electron_energies)
 
         self.data = SCBAData(
-            config, electron_energies=self.electron_energies
+            config=config,
+            device=self.device,
+            electron_energies=self.electron_energies,
         )  # real data
 
     def _stash_sigma(self) -> None:
@@ -543,19 +486,19 @@ class SCBA(TransportSolver):
         if self.config.outputs.electron_ldos:
             self.observables.electron_ldos = -density(
                 self.data.g_retarded,
-                self.electron_solver.overlap,
+                self.device.overlap_matrices,
             ) / (2 * xp.pi)
             self.observables.electron_ldos *= 2  # Spin
         if self.config.outputs.electron_density:
             self.observables.electron_density = density(
                 self.data.g_lesser,
-                self.electron_solver.overlap,
+                self.device.overlap_matrices,
             ) / (2 * xp.pi)
             self.observables.electron_density *= 2  # Spin
         if self.config.outputs.hole_density:
             self.observables.hole_density = -density(
                 self.data.g_greater,
-                self.electron_solver.overlap,
+                self.device.overlap_matrices,
             ) / (2 * xp.pi)
             self.observables.hole_density *= 2  # Spin
 
@@ -579,11 +522,11 @@ class SCBA(TransportSolver):
         if self.config.outputs.self_energy_density:
             self.observables.sigma_lesser_density = density(
                 self.data.sigma_lesser,
-                self.electron_solver.overlap,
+                self.device.overlap_matrices,
             ) / (2 * xp.pi)
             self.observables.sigma_greater_density = -density(
                 self.data.sigma_greater,
-                self.electron_solver.overlap,
+                self.device.overlap_matrices,
             ) / (2 * xp.pi)
 
     @profiler.profile(label="SCBA: W observables", level="default", comm=comm)

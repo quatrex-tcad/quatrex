@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 
 import numpy as np
 
-from qttools import NDArray
+from qttools import NDArray, sparse
 from qttools.comm import comm
 from qttools.profiling import Profiler
 from quatrex.contact.discovery import real_space_discovery, simplified_discovery
@@ -28,6 +28,9 @@ class BaseContact(ABC):
         The configuration object containing the contact settings such as
         lattice vectors, origin, transport direction, and Fermi level
         information.
+    sparsity_pattern : sparse.spmatrix
+        The sparsity pattern of the device Hamiltonian, used to identify
+        the contact orbitals and their connectivity.
 
     Attributes
     ----------
@@ -71,7 +74,12 @@ class BaseContact(ABC):
 
     """
 
-    def __init__(self, device, contact_config: ContactConfig):
+    def __init__(
+        self,
+        device,
+        contact_config: ContactConfig,
+        sparsity_pattern: sparse.spmatrix,
+    ):
         """Initializes the contact object."""
 
         if comm.rank == 0:
@@ -88,7 +96,7 @@ class BaseContact(ABC):
         if contact_config._contact_finder_method == "real_space":
             self.unit_cell_orbital_indices, repetition_grid, self.origin_key = (
                 real_space_discovery(
-                    hamiltonian=device.hamiltonians[0, 0, 0],
+                    hamiltonian=sparsity_pattern,
                     atomic_species=device.atomic_species,
                     atom_coordinates=device.atom_coordinates,
                     orbital_offsets=device.orbital_offsets,

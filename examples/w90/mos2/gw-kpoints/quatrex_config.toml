@@ -12,6 +12,16 @@ neighbor_cell_cutoff = [2, 2, 0]
 
 num_transport_cells = 4
 
+    [[device.contacts]]
+    name = "left"
+    fermi_level = -0.031537969 # eV
+    mid_gap_energy = -1      # eV
+
+    [[device.contacts]]
+    name = "right"
+    fermi_level = -0.031537969 # eV
+    mid_gap_energy = -1      # eV
+
 [scba] # =============================================================
 max_iterations = 2
 mixing_factor = 0.5
@@ -35,14 +45,6 @@ coulomb_screening_density = true
 
 
 [electron] # =========================================================
-left_contact.name = "left"
-left_contact.fermi_level = -0.031537969  # eV
-left_contact.mid_gap_energy = -1 # eV
-
-right_contact.name = "right"
-right_contact.fermi_level = -0.031537969  # eV
-right_contact.mid_gap_energy = -1 # eV
-
 
 band_edge_tracking = true
 

@@ -2,8 +2,18 @@
 
 """Includes the SCBA contact class."""
 
+import numpy as np
+
 from qttools import NDArray, xp
+from qttools.boundary_conditions import lyapunov, obc
+from qttools.nevp import NEVP, Beyn, Full
 from quatrex.contact.base import BaseContact
+from quatrex.core.config import (
+    LyapunovComputeConfig,
+    LyapunovConfig,
+    NEVPConfig,
+    OBCConfig,
+)
 
 
 def order_vector(
@@ -117,6 +127,9 @@ class SCBAContact(BaseContact):
         The configuration object containing the contact settings such as
         lattice vectors, origin, transport direction, and Fermi level
         information.
+    sparsity_pattern : sparse.spmatrix
+        The sparsity pattern of the device Hamiltonian, used to identify
+        the contact orbitals and their connectivity.
 
     Attributes
     ----------
@@ -157,8 +170,322 @@ class SCBAContact(BaseContact):
         Voltage applied to the contact in V.
     temperature : float
         Temperature of the contact in K.
+    diagonal_inds : tuple[int, int]
+        Tuple of indices corresponding to the diagonal block of the
+        contact in the Hamiltonian.
+    upper_inds : tuple[int, int]
+        Tuple of indices corresponding to the upper block of the contact
+        in the Hamiltonian.
+    order : str | None
+        Order of the contact indices, either None or "reverse" for
+        ascending or descending order, respectively.
+    obc_solvers : dict[str, obc.OBCSystem]
+        Dictionary of OBC solvers for different subsystems (e.g.,
+        electron, phonon, photon, etc.).
+    lyapunov_solvers : dict[str, lyapunov.LyapunovSystem]
+        Dictionary of Lyapunov solvers for different subsystems (e.g.,
+        phonon, photon, etc.).
 
     """
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+
+        # Determine to which blocks the indices correspond to.
+        self._analyze_contact_indices()
+
+        self.obc_solvers = {}
+        self.lyapunov_solvers = {}
+
+        config = self.device.config
+
+        # TODO: Make a compute nevp compute config per subsystem.
+        # TODO: Make an obc config per contact.
+        self.obc_solvers["electron"] = self._configure_obc(
+            config.electron.obc,
+            config.compute.nevp,
+        )
+
+        if config.scba.coulomb_screening:
+            self.obc_solvers["coulomb_screening"] = self._configure_obc(
+                config.coulomb_screening.obc,
+                config.compute.nevp,
+                block_sections=self.device.coulomb_num_connected_blocks
+                * self.transport_repetitions,
+            )
+            self.lyapunov_solvers["coulomb_screening"] = self._configure_lyapunov(
+                config.coulomb_screening.lyapunov,
+                config.compute.lyapunov,
+            )
+
+        # TODO: Allocate OBC solver for the other systems (photons /
+        # phonons) when needed.
+
+    def _analyze_contact_indices(self):
+        """Map the contact indices to the corresponding blocks."""
+
+        if self.contact_config._contact_finder_method == "from_unit":
+            contact_name = self.name
+            if contact_name == "left":
+                self.diagonal_inds = (0, 0)
+                self.upper_inds = (0, 1)
+                self.order = None
+            elif contact_name == "right":
+                n = self.device.hamiltonians.num_local_blocks - 1
+                m = n - 1
+                self.diagonal_inds = (n, n)
+                self.upper_inds = (n, m)
+                self.order = "reverse"
+        elif self.contact_config._contact_finder_method == "real_space":
+            ny, nz = self.transverse_repetition_grid
+            indices = np.concatenate(
+                [
+                    self.unit_cell_orbital_indices[i, j, k]
+                    for i, j, k in np.ndindex(self.transport_repetitions + 1, ny, nz)
+                ]
+            )
+
+            # Check that the indices are contiguous i.e. no gaps
+            sorted_indices = np.sort(indices)
+            if not np.all(np.diff(sorted_indices) == 1):
+                raise ValueError(
+                    "The contact indices are not contiguous.\n"
+                    "This is currently not supported for real-space contacts in SCBA."
+                )
+
+            # TODO: Currently we do not allow orders except None and "reverse"
+            # i.e. with real space only left and right are supported
+            # where the hamiltonian is already correctly sorted.
+
+            # TODO: Check if indices are ascending or descending
+            # TODO: These checks are not robust and should be improved
+            # to handle more general cases.
+            if np.min(indices) == 0:
+                self.order = None
+                self.diagonal_inds = (0, 0)
+                self.upper_inds = (0, 1)
+
+            elif np.max(indices) == self.device.hamiltonians.shape[-1] - 1:
+                n = self.device.hamiltonians.num_local_blocks - 1
+                m = n - 1
+                self.diagonal_inds = (n, n)
+                self.upper_inds = (n, m)
+                self.order = "reverse"
+
+            else:
+                raise ValueError("The contact indices cannot be matched.")
+
+        # TODO validate that contacts do not span multiple ranks
+
+    def _configure_obc(
+        self,
+        obc_config: OBCConfig,
+        nevp_config: NEVPConfig,
+        block_sections: int | None = None,
+    ) -> obc.OBCSystem:
+        """Configures the OBC solver.
+
+        Parameters
+        ----------
+        obc_config : OBCConfig
+            Configuration object containing OBC algorithm settings
+            including solver type, convergence parameters, and numerical
+            options.
+        nevp_config : NEVPConfig
+            Configuration object containing NEVP solver settings
+            including solver type and algorithm-specific parameters.
+        block_sections : int | None, optional
+            Number of block sections to use in the OBC solver. This is
+            only needed for the Coulomb subsystem where the number of
+            sections need to be multiplied by the bandwidth increase.
+
+        Returns
+        -------
+        obc_solver: obc.OBCSystem
+            Configured OBC system ready for boundary condition
+            calculations.
+
+        """
+        if obc_config.algorithm == "sancho-rubio":
+            obc_solver = obc.SanchoRubio(
+                obc_config.max_iterations, obc_config.convergence_tol
+            )
+
+        elif obc_config.algorithm == "spectral":
+            nevp = self._configure_nevp(obc_config, nevp_config)
+            obc_solver = obc.Spectral(
+                nevp=nevp,
+                block_sections=(
+                    self.transport_repetitions
+                    if block_sections is None
+                    else block_sections
+                ),
+                min_decay=obc_config.min_decay,
+                max_decay=obc_config.max_decay,
+                num_ref_iterations=obc_config.num_ref_iterations,
+                min_propagation=obc_config.min_propagation,
+                residual_tolerance=obc_config.residual_tolerance,
+                residual_normalization=obc_config.residual_normalization,
+                eta_decay=obc_config.eta_decay,
+            )
+
+        else:
+            raise NotImplementedError(
+                f"OBC algorithm '{obc_config.algorithm}' not implemented."
+            )
+
+        # NOTE: wrapper handles if the memoizer is off
+        obc_solver = obc.OBCSystem(
+            boundary_solver=obc_solver,
+            num_ref_iterations=obc_config.memoizer.num_ref_iterations,
+            relative_tol=obc_config.memoizer.relative_tol,
+            absolute_tol=obc_config.memoizer.absolute_tol,
+            warning_threshold=obc_config.memoizer.warning_threshold,
+            memoization_mode=obc_config.memoizer.mode,
+            agreement_threshold=obc_config.memoizer.agreement_threshold,
+        )
+
+        return obc_solver
+
+    def _configure_nevp(
+        self,
+        obc_config: OBCConfig,
+        nevp_config: NEVPConfig,
+    ) -> NEVP:
+        """Configures the Nonlinear Eigenvalue Problem (NEVP) solver.
+
+        Parameters
+        ----------
+        obc_config : OBCConfig
+            Configuration object containing NEVP solver settings
+            including solver type and algorithm-specific parameters.
+        nevp_config : NEVPConfig
+            Configuration object containing NEVP solver settings
+            including solver type and algorithm-specific parameters.
+
+        Returns
+        -------
+        NEVP
+            Configured NEVP solver ready for eigenvalue calculations.
+
+        """
+        if obc_config.nevp_solver == "beyn":
+            return Beyn(
+                r_o=obc_config.r_o,
+                r_i=obc_config.r_i,
+                m_0=obc_config.m_0,
+                num_quad_points=obc_config.num_quad_points,
+                num_threads_contour=nevp_config.num_threads_contour,
+                eig_compute_location=nevp_config.eig_compute_location,
+                project_compute_location=nevp_config.project_compute_location,
+                use_qr=nevp_config.use_qr,
+                contour_batch_size=nevp_config.contour_batch_size,
+                use_pinned_memory=nevp_config.use_pinned_memory,
+            )
+        if obc_config.nevp_solver == "full":
+            return Full(
+                eig_compute_location=nevp_config.eig_compute_location,
+                use_pinned_memory=nevp_config.use_pinned_memory,
+                reduce=nevp_config.reduce_sparsity,
+            )
+
+        raise NotImplementedError(
+            f"NEVP solver '{obc_config.nevp_solver}' not implemented."
+        )
+
+    def _configure_lyapunov(
+        self,
+        lyapunov_config: LyapunovConfig,
+        lyapunov_compute_config: LyapunovComputeConfig,
+    ) -> lyapunov.LyapunovSystem:
+        """Configures the Lyapunov solver from the config.
+
+        Parameters
+        ----------
+        lyapunov_config : LyapunovConfig
+            The Lyapunov configuration.
+        lyapunov_compute_config : LyapunovComputeConfig
+            The Lyapunov compute configuration.
+
+        Returns
+        -------
+        lyapunov.LyapunovSystem
+            The configured Lyapunov solver.
+
+        """
+        if lyapunov_config.algorithm == "spectral":
+            lyapunov_solver = lyapunov.Spectral(
+                num_ref_iterations=lyapunov_config.num_ref_iterations,
+                eig_compute_location=lyapunov_compute_config.eig_compute_location,
+                use_pinned_memory=lyapunov_compute_config.use_pinned_memory,
+            )
+        elif lyapunov_config.algorithm == "doubling":
+            lyapunov_solver = lyapunov.Doubling(
+                max_iterations=lyapunov_config.max_iterations,
+                convergence_rel_tol=lyapunov_config.relative_tol,
+                convergence_abs_tol=lyapunov_config.absolute_tol,
+            )
+        else:
+            raise NotImplementedError(
+                f"Lyapunov algorithm '{lyapunov_config.algorithm}' not implemented."
+            )
+
+        lyapunov_system_reducer = lyapunov.LyapunovSystemReducer(
+            reduce_sparsity=lyapunov_config.reduce_sparsity,
+            assume_constant_sparsity=lyapunov_config.assume_constant_sparsity,
+        )
+
+        # NOTE: wrapper handles if the memoizer is off
+        lyapunov_solver = lyapunov.LyapunovSystem(
+            boundary_solver=lyapunov_solver,
+            system_reducer=lyapunov_system_reducer,
+            num_ref_iterations=lyapunov_config.memoizer.num_ref_iterations,
+            relative_tol=lyapunov_config.memoizer.relative_tol,
+            absolute_tol=lyapunov_config.memoizer.absolute_tol,
+            warning_threshold=lyapunov_config.memoizer.warning_threshold,
+            memoization_mode=lyapunov_config.memoizer.mode,
+            agreement_threshold=lyapunov_config.memoizer.agreement_threshold,
+        )
+
+        return lyapunov_solver
+
+    def compute_contact_bandstructure(
+        self,
+        kpoint: NDArray,
+        kpoints_transport: NDArray,
+    ) -> NDArray:
+        """Computes the band structure for the contact at a given
+        k-point and along the transport direction.
+
+        Parameters
+        ----------
+        kpoint : NDArray
+            The k-point at which to compute the band structure.
+        kpoints_transport : NDArray
+            The k-points along the transport direction.
+
+        Returns
+        -------
+        e_k : NDArray
+            The eigenvalues for the contact band structure.
+
+        """
+        pass
+
+    def compute_contact_band_properties(
+        self,
+    ) -> tuple[float, float, float]:
+        """Computes the Fermi level for the contact from the Hamiltonian and
+        overlap matrices.
+
+        Returns
+        -------
+        fermi_level : float
+            The computed Fermi level in eV.
+        mid_gap_energy : float
+            The recomputed mid-gap energy based on the band structure.
+        conduction_band_edge : float
+            The energy of the conduction band edge in eV.
+
+        """
+        pass

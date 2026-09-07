@@ -11,10 +11,10 @@ from quatrex.device.scba import SCBADevice
 def create_device(
     config: QuatrexConfig,
     validate_contacts: bool = True,
-) -> BaseDevice:
+) -> QTBMDevice | SCBADevice:
     if config.formalism == "wf":
         device = QTBMDevice(config)
-    elif config.formalism == "scba":
+    elif config.formalism == "negf":
         device = SCBADevice(config)
     else:
         raise ValueError(f"Unknown formalism {config.formalism}")

@@ -12,6 +12,21 @@ kpoint_shift = [0, 0, 0]
 
 block_size = 260
 
+    [[device.contacts]]
+    name = "left"
+    origin = [0.65, 0, 0]
+    lattice_vectors = [[2.57031, 0, 0], [0, 10, 0], [0, 0, 10]]
+    transport_direction = "a"
+    fermi_level = -3
+    mid_gap_energy = -4.5
+
+    [[device.contacts]]
+    name = "right"
+    origin = [256.4, -0.001, -0.001]
+    lattice_vectors = [[-2.57031, 0, 0], [0, 10, 0], [0, 0, 10]]
+    transport_direction = "a"
+    fermi_level = -3.001
+    mid_gap_energy = -4.5
 
 [scba] # =============================================================
 max_iterations = 2
@@ -27,11 +42,6 @@ self_energy_density = true
 
 
 [electron]
-left_contact.name = "left"
-left_contact.fermi_level = -3
-
-right_contact.name = "right"
-right_contact.fermi_level = -3.001
 
 energy_window_min = -5
 energy_window_max = -4

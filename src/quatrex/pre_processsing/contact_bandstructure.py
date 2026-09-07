@@ -168,7 +168,7 @@ def _plot_negf(config: QuatrexConfig, axes: plt.Axes) -> None:
 
 def plot_contact_band_structure(
     config: QuatrexConfig,
-    device: BaseDevice | None = None,
+    device: BaseDevice,
 ) -> None:
     """Plots the contact band structure for a given quatrex configuration.
 
@@ -176,8 +176,8 @@ def plot_contact_band_structure(
     ----------
     config : QuatrexConfig
         The quatrex simulation configuration.
-    device : BaseDevice | None
-        The device object. It is `None` for NEGF simulations.
+    device : BaseDevice
+        The device object.
 
     """
 
@@ -197,12 +197,7 @@ def plot_contact_band_structure(
     kpoint_grid = config.device.kpoint_grid
     kpoints = monkhorst_pack(kpoint_grid, config.device.kpoint_shift)
 
-    if config.formalism == "wf":
-        contacts = device.contacts
-    elif config.formalism == "negf":
-        contacts = [config.electron.left_contact, config.electron.right_contact]
-    else:
-        raise ValueError(f"Unknown formalism: {config.formalism}")
+    contacts = device.contacts
 
     # Turn off interactive plotting only for this step and increase font
     # size
@@ -223,7 +218,9 @@ def plot_contact_band_structure(
     if config.formalism == "wf":
         _plot_wf(config, axes, device)
     elif config.formalism == "negf":
-        _plot_negf(config, axes)
+        # TODO: make this work again.
+        # _plot_negf(config, axes)
+        pass
 
     for ax, contact in zip(axes[0], contacts):
         if contact.fermi_level is not None:

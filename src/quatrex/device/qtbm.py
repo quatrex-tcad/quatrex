@@ -77,7 +77,11 @@ class QTBMDevice(BaseDevice):
 
         for contact_config in self.device_config.contacts:
             self.contacts.append(
-                QTBMContact(device=self, contact_config=contact_config)
+                QTBMContact(
+                    device=self,
+                    contact_config=contact_config,
+                    sparsity_pattern=self.hamiltonians[(0, 0, 0)],
+                )
             )
 
         if comm.rank == 0:

@@ -22,7 +22,7 @@ from qttools.utils.sparse_utils import product_sparsity_pattern_dsdbsparse
 from quatrex.contact.scba import get_inverse_order, order_block
 from quatrex.core.config import QuatrexConfig
 from quatrex.core.subsystem import SubsystemSolver
-from quatrex.core.utils import compute_num_connected_blocks
+from quatrex.device import SCBADevice
 
 profiler = Profiler()
 
@@ -52,6 +52,8 @@ class CoulombScreeningSolver(SubsystemSolver):
     ----------
     config : QuatrexConfig
         The quatrex simulation configuration.
+    device : SCBADevice
+        The device for which to solve the subsystem.
     energies : NDArray
         The energies at which to solve.
 
@@ -62,34 +64,20 @@ class CoulombScreeningSolver(SubsystemSolver):
     def __init__(
         self,
         config: QuatrexConfig,
-        coulomb_matrix: DSDBSparse,
+        device: SCBADevice,
         energies: NDArray,
-        sparsity_pattern: sparse.coo_matrix,
     ) -> None:
         """Initializes the solver."""
-        super().__init__(config, energies)
+        super().__init__(config, device, energies)
 
-        self.coulomb_matrix = coulomb_matrix
+        self.coulomb_matrix = device.coulomb_matrix
         self.small_block_sizes = self.coulomb_matrix.block_sizes
+        self.block_sizes = device.coulomb_block_sizes
 
-        self.num_connected_blocks = config.coulomb_screening.num_connected_blocks
-        if self.num_connected_blocks == "auto":
-            self.num_connected_blocks = compute_num_connected_blocks(
-                sparsity_pattern, self.small_block_sizes
-            )
+        sparsity_pattern = device.sparsity_pattern
 
-        if len(self.small_block_sizes) % self.num_connected_blocks != 0:
-            # Not implemented yet.
-            raise ValueError(
-                f"Number of blocks must be divisible by {self.num_connected_blocks}."
-            )
+        self.num_connected_blocks = device.coulomb_num_connected_blocks
 
-        self.block_sizes = (
-            self.small_block_sizes[
-                : len(self.small_block_sizes) // self.num_connected_blocks
-            ]
-            * self.num_connected_blocks
-        )
         # Check that the provided block sizes match the coulomb matrix.
         if self.small_block_sizes.sum() != self.coulomb_matrix.shape[-2]:
             raise ValueError(

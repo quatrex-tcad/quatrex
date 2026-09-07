@@ -71,12 +71,13 @@ class QTBM(TransportSolver):
 
     Parameters
     ----------
-    device : QTBMDevice
-        The quantum device object containing Hamiltonian, atomic
-        structure, and attached contacts.
     config : QuatrexConfig
         Configuration object containing calculation parameters, energy
         grid, and numerical settings.
+    device : QTBMDevice
+        The quantum device object containing Hamiltonian, atomic
+        structure, and attached contacts.
+
 
     Attributes
     ----------
@@ -95,7 +96,7 @@ class QTBM(TransportSolver):
 
     """
 
-    def __init__(self, device: QTBMDevice, config: QuatrexConfig) -> None:
+    def __init__(self, config: QuatrexConfig, device: QTBMDevice) -> None:
         """Initializes the QTBM solver."""
 
         self.device = device

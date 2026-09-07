@@ -1111,28 +1111,6 @@ class ElectronConfig(BaseModel):
 
     """
 
-    left_contact: ContactConfig | None = None
-    """Configuration for the left contact.
-
-    This must be provided for any `"negf"` simulation.
-
-    !!! note
-
-        In `"wf"` simulations, the left and right contacts are not used.
-
-    """
-
-    right_contact: ContactConfig | None = None
-    """Configuration for the right contact.
-
-    This must be provided for any `"negf"` simulation.
-
-    !!! note
-
-        In `"wf"` simulations, the left and right contacts are not used.
-
-    """
-
     band_edge_tracking: bool = False
     """Whether to track the band edges during the SCBA iterations.
 
@@ -1223,27 +1201,6 @@ class ElectronConfig(BaseModel):
     This can help mitigate memory bottlenecks.
 
     """
-
-    @model_validator(mode="after")
-    def check_mid_gap_energy_band_edge_tracking(self) -> Self:
-        """Checks that the mid-gap-energy is set if band edge tracking is enabled."""
-        if self.band_edge_tracking:
-            if (
-                self.left_contact is not None
-                and self.left_contact.mid_gap_energy is None
-            ):
-                raise ValueError(
-                    "When band edge tracking is enabled, the `mid_gap_energy` of the left contact must be set."
-                )
-            if (
-                self.right_contact is not None
-                and self.right_contact.mid_gap_energy is None
-            ):
-                raise ValueError(
-                    "When band edge tracking is enabled, the `mid_gap_energy` of the right contact must be set."
-                )
-
-        return self
 
     @model_validator(mode="after")
     def verify_energies(self) -> Self:
@@ -2443,18 +2400,7 @@ class QuatrexConfig(BaseModel):
     @model_validator(mode="after")
     def check_device_contact_voltages(self) -> Self:
         """Checks that at least one contact exists and is grounded."""
-        # TODO: Contacts should be unified between the two formalisms.
-        if self.formalism == "negf":
-            if (
-                self.electron.left_contact is None
-                or self.electron.right_contact is None
-            ):
-                raise ValueError("Both left and right contacts must be defined.")
-            contacts = [self.electron.left_contact, self.electron.right_contact]
-        elif self.formalism == "wf":
-            contacts = self.device.contacts
-        else:
-            raise ValueError(f"Invalid formalism '{self.formalism}'.")
+        contacts = self.device.contacts
 
         if len(contacts) < 2:
             raise ValueError("At least two contacts must be defined.")
@@ -2469,12 +2415,7 @@ class QuatrexConfig(BaseModel):
     @model_validator(mode="after")
     def check_either_fermi_or_midgap(self) -> Self:
         """Checks that either the Fermi level or the mid-gap energy is set."""
-        if self.formalism == "negf":
-            contacts = [self.electron.left_contact, self.electron.right_contact]
-        elif self.formalism == "wf":
-            contacts = self.device.contacts
-        else:
-            raise ValueError(f"Invalid formalism '{self.formalism}'.")
+        contacts = self.device.contacts
 
         for contact in contacts:
             if contact.fermi_level is None and contact.mid_gap_energy is None:
@@ -2503,6 +2444,18 @@ class QuatrexConfig(BaseModel):
                     "The `direction` parameter of each contact must be "
                     "set in the 'wf' formalism."
                 )
+
+        return self
+
+    @model_validator(mode="after")
+    def check_contact_band_edge_tracking(self) -> Self:
+        """Checks that the mid-gap energy is set for each contact if band edge tracking is enabled."""
+        if self.formalism == "negf" and self.electron.band_edge_tracking:
+            for contact in self.device.contacts:
+                if contact.mid_gap_energy is None:
+                    raise ValueError(
+                        "When band edge tracking is enabled, the `mid_gap_energy` of each contact must be set."
+                    )
 
         return self
 

@@ -18,6 +18,7 @@ from quatrex.core.config import (
     QuatrexConfig,
     SolverConfig,
 )
+from quatrex.device import SCBADevice
 
 
 class SubsystemSolver(ABC):
@@ -27,6 +28,8 @@ class SubsystemSolver(ABC):
     ----------
     config : QuatrexConfig
         The quatrex simulation configuration.
+    device : SCBADevice
+        The device for which to solve the subsystem.
     energies : np.ndarray
         The energies at which to solve.
 
@@ -41,6 +44,7 @@ class SubsystemSolver(ABC):
     def __init__(
         self,
         config: QuatrexConfig,
+        device: SCBADevice,
         energies: NDArray,
     ) -> None:
         """Initializes the solver."""
@@ -61,6 +65,7 @@ class SubsystemSolver(ABC):
         )
 
         self.config = config
+        self.device = device
 
     def _configure_nevp(self, obc_config: OBCConfig, nevp_config: NEVPConfig) -> NEVP:
         """Configures the NEVP solver from the config.
