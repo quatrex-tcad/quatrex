@@ -248,7 +248,7 @@ Electron-phonon scattering is treated in a more simple picture.
 `quatrex` currently implements a
 `"pseudo-scattering"` electron-phonon coupling model with a
 single optical phonon mode as well as a
-`"long-wavelength"` model with multiple modes.
+`"deformation-potential"` model with multiple modes.
 
 In the `"pseudo-scattering"` model, the implemented phonon self-energy is
 
@@ -267,7 +267,7 @@ Bose-Einstein occupancy at temperature $T$.
 This model only computes the diagonal entries of
 $\mathbf{\Sigma}^{\lessgtr}_{ph}(E, \mathbf{k})$.
 
-In the `"long-wavelength"` model, the self-energy is computed as
+In the `"deformation-potential"` model, the self-energy is computed as
 
 $$
 \Sigma^\gtrless(E)
@@ -279,5 +279,6 @@ G^\gtrless(E\pm E_\mathrm{ph}),
 $$
 
 where the prefactors $V_{E_\mathrm{ph}}^\mathrm{em}$ and
-$V_{E_\mathrm{ph}}^\mathrm{abs}$ are derived from a provided phonon dispersion.
+$V_{E_\mathrm{ph}}^\mathrm{abs}$ are derived from the provided phonon dispersion
+and deformation potential constants.
 Here the off-diagonal elements are computed as well.

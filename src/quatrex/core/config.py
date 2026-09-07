@@ -1472,7 +1472,7 @@ class PhononConfig(BaseModel):
     self-energy.
 
     !!! note
-        Currently, only the `"pseudo-scattering"` and `"long-wavelength"`
+        Currently, only the `"pseudo-scattering"` and `"deformation-potential"`
         models / deformation potential interactions are implemented, which
         do not take this variable into account.
     """
@@ -1486,7 +1486,7 @@ class PhononConfig(BaseModel):
     lyapunov: LyapunovConfig = LyapunovConfig()
     """Parameters concerning the Lyapunov solver."""
 
-    model: Literal["pseudo-scattering", "long-wavelength"] = "pseudo-scattering"
+    model: Literal["pseudo-scattering", "deformation-potential"] = "pseudo-scattering"
     r"""Which model to use for the electron-phonon interaction.
 
     In the monochromatic `"pseudo-scattering"` model, the electron-phonon interaction
@@ -1503,7 +1503,7 @@ class PhononConfig(BaseModel):
     distribution at the specified [`temperature`](#temperature).
     Only the diagonal of $\Sigma^{\lessgtr}(E)$ is computed.
 
-    In the `"long-wavelength"` model, the self-energy is computed as
+    In the `"deformation-potential"` model, the self-energy is computed as
 
     $$
     \Sigma^\gtrless(E)
@@ -1532,7 +1532,7 @@ class PhononConfig(BaseModel):
     temperature: PositiveFloat = 300.0  # K
     """The temperature of the system in Kelvin."""
 
-    # Long-wavelength phonons
+    # Deformation potential approximation
     acoustic_deformation_potential: FiniteFloat | None = None
     """The deformation potential of the acoustic phonon modes in eV."""
     optical_deformation_potential: FiniteFloat | None = None
@@ -1556,10 +1556,10 @@ class PhononConfig(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def check_long_wavelength_properties_provided(self):
-        """Check whether all required long-wavelength properties are provided."""
+    def check_deformation_potential_properties_provided(self):
+        """Check whether all required deformation-potential properties are provided."""
 
-        if self.model != "long-wavelength":
+        if self.model != "deformation-potential":
             return self
 
         if (
@@ -2463,7 +2463,7 @@ class QuatrexConfig(BaseModel):
                     f"Energy grid not specified and file '{(self.input_dir / 'electron_energies.npy').resolve()}' does not exist."
                 )
 
-        if self.scba.phonon and self.phonon.model == "long-wavelength":
+        if self.scba.phonon and self.phonon.model == "deformation-potential":
             if not (self.input_dir / "phonon_dispersion.npy").resolve().is_file():
                 raise ValueError(
                     f"The phonon dispersion (file '{(self.input_dir / 'phonon_dispersion.npy').resolve()}') has not been provided."
