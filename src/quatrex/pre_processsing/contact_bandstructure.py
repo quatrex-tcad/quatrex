@@ -3,7 +3,6 @@
 """Includes functions to plot the contact band structure for a given quatrex configuration."""
 
 import os
-import warnings
 
 import matplotlib
 import numpy as np
@@ -94,12 +93,9 @@ def plot_contact_band_structure(
 
     """
 
-    if comm.rank != 0:
-        return
-
     if comm.size > 1:
-        warnings.warn(
-            "Pre-processing is only performed on rank 0. "
+        raise ValueError(
+            "Pre-processing can be only performed on a single process. "
             "If you are running a parallel simulation, please ensure that "
             "the pre-processing steps are completed before starting the parallel run."
         )

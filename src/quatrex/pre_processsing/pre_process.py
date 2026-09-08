@@ -24,8 +24,10 @@ def pre_process(config: QuatrexConfig):
     """
 
     if comm.size > 1:
-        raise RuntimeError(
-            "The 'pre-process' command can only be run on a single process."
+        raise ValueError(
+            "Pre-processing can be only performed on a single process. "
+            "If you are running a parallel simulation, please ensure that "
+            "the pre-processing steps are completed before starting the parallel run."
         )
 
     device = create_device(config)

@@ -11,17 +11,10 @@ import numpy as np
 
 from qttools import NDArray, sparse, xp
 from qttools.boundary_conditions import obc
-from qttools.comm import comm
 from qttools.nevp import NEVP, Beyn, Full
 from qttools.profiling import Profiler
 from qttools.toeplitz.circulant import construct_circulant_cell
-from qttools.utils.gpu_utils import get_host
-from quatrex.bandstructure.contact import (
-    contact_band_edges,
-    contact_band_structure,
-    contact_doping_density,
-    contact_fermi_level,
-)
+from quatrex.bandstructure.contact import contact_band_structure
 from quatrex.contact.base import BaseContact
 from quatrex.core.config import NEVPConfig, OBCConfig
 
@@ -844,69 +837,3 @@ class QTBMContact(BaseContact):
             e_k[:, m, :] = contact_band_structure(kpoints_transport, H_XX, S_XX)
 
         return e_k
-
-    def compute_contact_band_properties(
-        self,
-    ) -> tuple[float, float, float]:
-        """Computes the Fermi level for the contact from the Hamiltonian and
-        overlap matrices.
-
-        Returns
-        -------
-        fermi_level : float
-            The computed Fermi level in eV.
-        mid_gap_energy : float
-            The recomputed mid-gap energy based on the band structure.
-        conduction_band_edge : float
-            The energy of the conduction band edge in eV.
-
-        """
-        contact_config = self.contact_config
-        device_config = self.device.device_config
-
-        kpoints_transport = xp.linspace(
-            -xp.pi,
-            xp.pi,
-            contact_config.num_kpoints_transport,
-            endpoint=False,
-        )
-
-        e_k = self.compute_contact_bandstructure(
-            kpoints_transport=kpoints_transport,
-        )
-
-        # Average over transverse k-points.
-        e_k = xp.mean(e_k, axis=1)
-
-        doping_density = contact_doping_density(
-            coordinates=get_host(
-                self.device.orbital_coordinates[
-                    self.unit_cell_orbital_indices[self.origin_key]
-                ]
-            ),
-            geometry_regions=device_config.geometry.regions,
-        )
-
-        fermi_level = contact_fermi_level(
-            e_k=e_k,
-            kpoints=kpoints_transport,
-            mid_gap_energy=self.mid_gap_energy,
-            cell_volume=self.cell_volume,
-            doping_density=doping_density,
-            temperature=self.temperature,
-        )
-
-        # Recompute the actual mid-gap energy from the band structure.
-        valence_band_edge, conduction_band_edge = contact_band_edges(
-            e_k, self.mid_gap_energy
-        )
-        mid_gap_energy = 0.5 * (conduction_band_edge + valence_band_edge)
-
-        if comm.rank == 0:
-            print(f"    Doping density: {doping_density} Å^-3", flush=True)
-            print(f"    Fermi level: {fermi_level} eV", flush=True)
-            print(f"    Conduction band minimum: {conduction_band_edge} eV", flush=True)
-            print(f"    Valence band maximum: {valence_band_edge} eV", flush=True)
-            print(f"    Recomputed mid-gap energy: {mid_gap_energy} eV", flush=True)
-
-        return fermi_level, mid_gap_energy, conduction_band_edge

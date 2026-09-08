@@ -487,21 +487,3 @@ class SCBAContact(BaseContact):
         e_k = e_k.reshape(e_k.shape[0], -1, e_k.shape[-1])
 
         return e_k
-
-    def compute_contact_band_properties(
-        self,
-    ) -> tuple[float, float, float]:
-        """Computes the Fermi level for the contact from the Hamiltonian and
-        overlap matrices.
-
-        Returns
-        -------
-        fermi_level : float
-            The computed Fermi level in eV.
-        mid_gap_energy : float
-            The recomputed mid-gap energy based on the band structure.
-        conduction_band_edge : float
-            The energy of the conduction band edge in eV.
-
-        """
-        pass
