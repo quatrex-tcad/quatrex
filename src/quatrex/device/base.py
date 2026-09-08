@@ -266,6 +266,7 @@ class BaseDevice:
         # The Fermi level is always required while midgap energy and
         # `conduction_band_edge` are only required if SCSP is
         # used.
+        # Also needed when band edge tracking is enabled.
         for contact_config, contact in zip(self.device_config.contacts, self.contacts):
             if (
                 (contact_config.fermi_level is None)
@@ -277,6 +278,7 @@ class BaseDevice:
                     contact_config.mid_gap_energy is None
                     and self.config.scsp is not None
                 )
+                or self.config.electron.band_edge_tracking
             ):
                 if comm.rank == 0:
                     print(

@@ -6,6 +6,7 @@ import numpy as np
 
 from qttools import NDArray, xp
 from qttools.boundary_conditions import lyapunov, obc
+from qttools.comm import comm
 from qttools.nevp import NEVP, Beyn, Full
 from quatrex.bandstructure.contact import contact_band_structure
 from quatrex.contact.base import BaseContact
@@ -180,6 +181,8 @@ class SCBAContact(BaseContact):
     order : str | None
         Order of the contact indices, either None or "reverse" for
         ascending or descending order, respectively.
+    owning_rank : int
+        The rank of the block comm process that owns the contact indices.
     obc_solvers : dict[str, obc.OBCSystem]
         Dictionary of OBC solvers for different subsystems (e.g.,
         electron, phonon, photon, etc.).
@@ -231,12 +234,14 @@ class SCBAContact(BaseContact):
                 self.diagonal_inds = (0, 0)
                 self.upper_inds = (0, 1)
                 self.order = None
+                self.owning_rank = 0
             elif contact_name == "right":
                 n = self.device.hamiltonians.num_local_blocks - 1
                 m = n - 1
                 self.diagonal_inds = (n, n)
                 self.upper_inds = (n, m)
                 self.order = "reverse"
+                self.owning_rank = comm.block.size - 1
         elif self.contact_config._contact_finder_method == "real_space":
             ny, nz = self.transverse_repetition_grid
             indices = np.concatenate(
@@ -265,6 +270,7 @@ class SCBAContact(BaseContact):
                 self.order = None
                 self.diagonal_inds = (0, 0)
                 self.upper_inds = (0, 1)
+                self.owning_rank = 0
 
             elif np.max(indices) == self.device.hamiltonians.shape[-1] - 1:
                 n = self.device.hamiltonians.num_local_blocks - 1
@@ -272,7 +278,7 @@ class SCBAContact(BaseContact):
                 self.diagonal_inds = (n, n)
                 self.upper_inds = (n, m)
                 self.order = "reverse"
-
+                self.owning_rank = comm.block.size - 1
             else:
                 raise ValueError("The contact indices cannot be matched.")
 

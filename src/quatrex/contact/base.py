@@ -251,6 +251,29 @@ class BaseContact(ABC):
         # Average over transverse k-points.
         e_k = xp.mean(e_k, axis=1)
 
+        # Recompute the actual mid-gap energy from the band structure.
+        valence_band_edge, conduction_band_edge = contact_band_edges(
+            e_k, self.mid_gap_energy
+        )
+        mid_gap_energy = 0.5 * (conduction_band_edge + valence_band_edge)
+
+        # The Fermi level is provided, no need to compute.
+        if contact_config.fermi_level is not None:
+            if comm.rank == 0:
+                print(
+                    f"Computing contact properties for contact '{contact_config.name}'...",
+                    flush=True,
+                )
+                print(f"    Fermi level: {contact_config.fermi_level} eV", flush=True)
+                print(
+                    f"    Conduction band minimum: {conduction_band_edge} eV",
+                    flush=True,
+                )
+                print(f"    Valence band maximum: {valence_band_edge} eV", flush=True)
+                print(f"    Recomputed mid-gap energy: {mid_gap_energy} eV", flush=True)
+
+            return contact_config.fermi_level, mid_gap_energy, conduction_band_edge
+
         doping_density = contact_doping_density(
             coordinates=get_host(
                 self.device.orbital_coordinates[
@@ -268,12 +291,6 @@ class BaseContact(ABC):
             doping_density=doping_density,
             temperature=self.temperature,
         )
-
-        # Recompute the actual mid-gap energy from the band structure.
-        valence_band_edge, conduction_band_edge = contact_band_edges(
-            e_k, self.mid_gap_energy
-        )
-        mid_gap_energy = 0.5 * (conduction_band_edge + valence_band_edge)
 
         if comm.rank == 0:
             print(
