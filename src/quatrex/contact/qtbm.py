@@ -24,7 +24,6 @@ from quatrex.bandstructure.contact import (
 )
 from quatrex.contact.base import BaseContact
 from quatrex.core.config import NEVPConfig, OBCConfig
-from quatrex.grid import monkhorst_pack
 
 profiler = Profiler()
 
@@ -758,16 +757,13 @@ class QTBMContact(BaseContact):
 
     def compute_contact_bandstructure(
         self,
-        kpoint: NDArray,
         kpoints_transport: NDArray,
     ) -> NDArray:
-        """Computes the band structure for the contact at a given
-        k-point and along the transport direction.
+        """Computes the band structure for the contact along the
+        transport direction.
 
         Parameters
         ----------
-        kpoint : NDArray
-            The k-point at which to compute the band structure.
         kpoints_transport : NDArray
             The k-points along the transport direction.
 
@@ -777,62 +773,77 @@ class QTBMContact(BaseContact):
             The eigenvalues for the contact band structure.
 
         """
-        h_xx = self._get_contact_blocks(
-            matrices=self.device.hamiltonians,
-            kpoint=kpoint,
-            upper=True,
-        )
-        s_xx = self._get_contact_blocks(
-            matrices=self.device.overlap_matrices,
-            kpoint=kpoint,
-            upper=True,
-        )
-
-        grid = (self.transport_repetitions + 1,) + self.transverse_repetition_grid
-
-        h_xx_tmp = {}
-        s_xx_tmp = {}
-        # shuffle keys to to have natural order a,b,c
-        for i, j, k in np.ndindex(*grid):
-            index = [j, k]
-            index.insert(self.transport_direction, i)
-            index = tuple(index)
-            h_xx_tmp[index] = h_xx[i, j, k].toarray()
-            s_xx_tmp[index] = s_xx[i, j, k].toarray()
-        h_xx = h_xx_tmp
-        s_xx = s_xx_tmp
-
-        phases = tuple(np.exp(2j * np.pi * k) for k in kpoint)
-        phases = (
-            phases[: self.transport_direction] + phases[self.transport_direction + 1 :]
+        e_k = xp.zeros(
+            (
+                len(kpoints_transport),
+                self.device.kpoints.shape[0],
+                len(self.unit_cell_orbital_indices[self.origin_key])
+                * self.transport_repetitions
+                * np.prod(self.transverse_repetition_grid),
+            ),
+            dtype=float,
         )
 
-        H_XX = tuple(
-            construct_circulant_cell(
-                matrix_dict=h_xx,
-                transport_cell_size=self.transport_repetitions,
-                transport_ind=self.transport_direction,
-                block_index=block_index,
-                sections=self.transverse_repetition_grid,
-                phases=phases,
-                key_assumption="half",
+        for m, kpoint in enumerate(self.device.kpoints):
+            h_xx = self._get_contact_blocks(
+                matrices=self.device.hamiltonians,
+                kpoint=kpoint,
+                upper=True,
             )
-            for block_index in [-1, 0, 1]
-        )
-        S_XX = tuple(
-            construct_circulant_cell(
-                matrix_dict=s_xx,
-                transport_cell_size=self.transport_repetitions,
-                transport_ind=self.transport_direction,
-                block_index=block_index,
-                sections=self.transverse_repetition_grid,
-                phases=phases,
-                key_assumption="half",
+            s_xx = self._get_contact_blocks(
+                matrices=self.device.overlap_matrices,
+                kpoint=kpoint,
+                upper=True,
             )
-            for block_index in [-1, 0, 1]
-        )
 
-        return contact_band_structure(kpoints_transport, H_XX, S_XX)
+            grid = (self.transport_repetitions + 1,) + self.transverse_repetition_grid
+
+            h_xx_tmp = {}
+            s_xx_tmp = {}
+            # shuffle keys to to have natural order a,b,c
+            for i, j, k in np.ndindex(*grid):
+                index = [j, k]
+                index.insert(self.transport_direction, i)
+                index = tuple(index)
+                h_xx_tmp[index] = h_xx[i, j, k].toarray()
+                s_xx_tmp[index] = s_xx[i, j, k].toarray()
+            h_xx = h_xx_tmp
+            s_xx = s_xx_tmp
+
+            phases = tuple(np.exp(2j * np.pi * k) for k in kpoint)
+            phases = (
+                phases[: self.transport_direction]
+                + phases[self.transport_direction + 1 :]
+            )
+
+            H_XX = tuple(
+                construct_circulant_cell(
+                    matrix_dict=h_xx,
+                    transport_cell_size=self.transport_repetitions,
+                    transport_ind=self.transport_direction,
+                    block_index=block_index,
+                    sections=self.transverse_repetition_grid,
+                    phases=phases,
+                    key_assumption="half",
+                )
+                for block_index in [-1, 0, 1]
+            )
+            S_XX = tuple(
+                construct_circulant_cell(
+                    matrix_dict=s_xx,
+                    transport_cell_size=self.transport_repetitions,
+                    transport_ind=self.transport_direction,
+                    block_index=block_index,
+                    sections=self.transverse_repetition_grid,
+                    phases=phases,
+                    key_assumption="half",
+                )
+                for block_index in [-1, 0, 1]
+            )
+
+            e_k[:, m, :] = contact_band_structure(kpoints_transport, H_XX, S_XX)
+
+        return e_k
 
     def compute_contact_band_properties(
         self,
@@ -860,27 +871,9 @@ class QTBMContact(BaseContact):
             endpoint=False,
         )
 
-        transverse_axes = [0, 1, 2]
-        transverse_axes.remove(self.transport_direction)
-
-        kpoints = monkhorst_pack(device_config.kpoint_grid, device_config.kpoint_shift)
-
-        e_k = xp.zeros(
-            (
-                len(kpoints_transport),
-                kpoints.shape[0],
-                len(self.unit_cell_orbital_indices[self.origin_key])
-                * self.transport_repetitions
-                * np.prod(self.transverse_repetition_grid),
-            ),
-            dtype=float,
+        e_k = self.compute_contact_bandstructure(
+            kpoints_transport=kpoints_transport,
         )
-
-        for m, kpoint in enumerate(kpoints):
-            e_k[:, m, :] = self.compute_contact_bandstructure(
-                kpoint=kpoint,
-                kpoints_transport=kpoints_transport,
-            )
 
         # Average over transverse k-points.
         e_k = xp.mean(e_k, axis=1)

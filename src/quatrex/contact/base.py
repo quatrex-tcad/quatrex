@@ -194,16 +194,13 @@ class BaseContact(ABC):
     @abstractmethod
     def compute_contact_bandstructure(
         self,
-        kpoint: NDArray,
         kpoints_transport: NDArray,
     ) -> NDArray:
-        """Computes the band structure for the contact at a given
-        k-point and along the transport direction.
+        """Computes the band structure for the contact along the
+        transport direction.
 
         Parameters
         ----------
-        kpoint : NDArray
-            The k-point at which to compute the band structure.
         kpoints_transport : NDArray
             The k-points along the transport direction.
 

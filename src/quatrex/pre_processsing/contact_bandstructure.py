@@ -12,11 +12,8 @@ from matplotlib import pyplot as plt
 from qttools import NDArray, xp
 from qttools.comm import comm
 from qttools.utils.gpu_utils import get_host
-from quatrex.bandstructure.contact import contact_band_structure
 from quatrex.core.config import QuatrexConfig
 from quatrex.device import BaseDevice
-from quatrex.device.inputs import assemble_matrix
-from quatrex.grid import monkhorst_pack
 
 
 def _plot(
@@ -41,7 +38,7 @@ def _plot(
     ax.scatter(k_repeated, get_host(e_k), color="blue", s=10)
 
 
-def _plot_wf(config: QuatrexConfig, axes: plt.Axes, device: BaseDevice) -> None:
+def _generate_plots(config: QuatrexConfig, axes: plt.Axes, device: BaseDevice) -> None:
     """Plots the contact band structure for a wavefunction simulation.
 
     Parameters
@@ -54,115 +51,31 @@ def _plot_wf(config: QuatrexConfig, axes: plt.Axes, device: BaseDevice) -> None:
         The device object.
 
     """
-
-    kpoint_grid = config.device.kpoint_grid
-    kpoints = monkhorst_pack(kpoint_grid, config.device.kpoint_shift)
-
-    if device.gamma_only and kpoint_grid != (1, 1, 1):
-        raise ValueError(
-            "The device only has a Gamma point Hamiltonian, "
-            "but more than one k-point is configured."
-        )
-
     # NOTE: Not the most efficient code since we do naive loops. The
     # code could be potentially batched, but this should not be a
     # bottleneck since it is only pre-processing.
-    for m, kpoint in enumerate(kpoints):
-        for n, (contact, contact_config) in enumerate(
-            zip(device.contacts, config.device.contacts)
-        ):
-            kpoints_transport = xp.linspace(
-                -xp.pi,
-                xp.pi,
-                contact_config.num_kpoints_transport,
-                endpoint=False,
-            )
-
-            e_k = contact.compute_contact_bandstructure(
-                kpoint=kpoint,
-                kpoints_transport=kpoints_transport,
-            )
-
-            if contact_config.voltage is not None:
-                e_k += contact_config.voltage
-
-            _plot(
-                ax=axes[m, n],
-                kpoints_transport=kpoints_transport,
-                e_k=e_k,
-            )
-
-
-def _plot_negf(config: QuatrexConfig, axes: plt.Axes) -> None:
-    """Plots the contact band structure for a NEGF simulation.
-
-    Parameters
-    ----------
-    config : QuatrexConfig
-        The quatrex simulation configuration.
-    axes : plt.Axes
-        The axes to plot on.
-
-    """
-
-    # Initialize the device
-    hamiltonian, __ = assemble_matrix(
-        config=config,
-        matrix_name="hamiltonian",
-        sparsity_pattern=None,
-        shift_kpoints=False,
-    )
-
-    try:
-        # Attempt to load the device overlap matrix.
-        overlap, __ = assemble_matrix(
-            config=config,
-            matrix_name="overlap",
-            sparsity_pattern=None,
-            shift_kpoints=False,
-        )
-        print("Non-orthogonal basis detected.", flush=True)
-
-    except FileNotFoundError:
-        overlap = None
-        print("No overlap matrix found. Assuming orthogonal basis.", flush=True)
-
-    for i, contact_config in enumerate(
-        [config.electron.left_contact, config.electron.right_contact]
+    for n, (contact, contact_config) in enumerate(
+        zip(device.contacts, config.device.contacts)
     ):
-        n = hamiltonian.num_local_blocks - 1
-        m = n - 1
-        diagonal_inds = (0, 0) if contact_config.name == "left" else (n, n)
-        upper_inds = (0, 1) if contact_config.name == "left" else (n, m)
-
-        h_xx = (
-            hamiltonian.blocks[*upper_inds[::-1]],
-            hamiltonian.blocks[*diagonal_inds],
-            hamiltonian.blocks[*upper_inds],
-        )
-
-        if overlap is not None:
-            s_xx = (
-                overlap.blocks[*upper_inds[::-1]],
-                overlap.blocks[*diagonal_inds],
-                overlap.blocks[*upper_inds],
-            )
-        else:
-            s_xx = None
-
-        kpoints_transport = np.linspace(
-            -np.pi,
-            np.pi,
+        kpoints_transport = xp.linspace(
+            -xp.pi,
+            xp.pi,
             contact_config.num_kpoints_transport,
             endpoint=False,
         )
 
-        e_k = contact_band_structure(kpoints_transport, h_xx, s_xx)
-        for j, kpoint in enumerate(np.ndindex(h_xx[0].shape[:-2])):
+        e_k = contact.compute_contact_bandstructure(
+            kpoints_transport=kpoints_transport,
+        )
+
+        if contact_config.voltage is not None:
+            e_k += contact_config.voltage
+
+        for m in range(len(device.kpoints)):
             _plot(
-                ax=axes[j, i],
+                ax=axes[m, n],
                 kpoints_transport=kpoints_transport,
-                e_k=e_k[:, *kpoint, :],
+                e_k=e_k[:, m, :],
             )
 
 
@@ -194,9 +107,6 @@ def plot_contact_band_structure(
     if not os.path.exists(config.output_dir):
         os.mkdir(config.output_dir)
 
-    kpoint_grid = config.device.kpoint_grid
-    kpoints = monkhorst_pack(kpoint_grid, config.device.kpoint_shift)
-
     contacts = device.contacts
 
     # Turn off interactive plotting only for this step and increase font
@@ -207,7 +117,7 @@ def plot_contact_band_structure(
     plt.rcParams.update({"font.size": 16})
 
     fig, axes = plt.subplots(
-        len(kpoints),
+        len(device.kpoints),
         len(contacts),
         figsize=(12, 6),
         squeeze=False,
@@ -215,12 +125,7 @@ def plot_contact_band_structure(
         sharey=True,
     )
 
-    if config.formalism == "wf":
-        _plot_wf(config, axes, device)
-    elif config.formalism == "negf":
-        # TODO: make this work again.
-        # _plot_negf(config, axes)
-        pass
+    _generate_plots(config, axes, device)
 
     for ax, contact in zip(axes[0], contacts):
         if contact.fermi_level is not None:
@@ -247,7 +152,7 @@ def plot_contact_band_structure(
     for ax, contact in zip(axes[0], contacts):
         ax.set_title(f"{contact.name.capitalize()} Contact")
 
-    for ax, kpoint in zip(axes[:, 0], kpoints):
+    for ax, kpoint in zip(axes[:, 0], device.kpoints):
         ax.set_ylabel(f"k-point:\n{kpoint}\nEnergy (eV)")
 
     for ax in axes[-1]:

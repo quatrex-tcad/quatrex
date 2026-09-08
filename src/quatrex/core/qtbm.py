@@ -31,7 +31,7 @@ from quatrex.core.constants import e, h
 from quatrex.core.statistics import fermi_dirac
 from quatrex.core.transport import TransportSolver
 from quatrex.device import QTBMDevice
-from quatrex.grid import get_electron_energies, monkhorst_pack
+from quatrex.grid import get_electron_energies
 
 profiler = Profiler()
 
@@ -83,8 +83,6 @@ class QTBM(TransportSolver):
     ----------
     device : QTBMDevice
         Reference to the device object.
-    kpoints : tuple
-        k-points for the calculation.
     observables : Observables
         Container for computed transport observables including
         transmission matrices, density of states, and current
@@ -111,10 +109,6 @@ class QTBM(TransportSolver):
                 "but more than one k-point is configured."
             )
 
-        # Generate the Monkhorst-Pack k-point grid.
-        self.kpoints = monkhorst_pack(kpoint_grid, config.device.kpoint_shift)
-        self.num_kpoints = self.kpoints.shape[0]
-
         self.max_batch_size = self.config.qtbm.max_batch_size
 
         self.observables = Observables()
@@ -133,13 +127,17 @@ class QTBM(TransportSolver):
 
                 # Initialize the observables
                 self.observables.transmissions[contact_in, contact_out] = xp.zeros(
-                    (self.num_kpoints, self.local_energies.shape[0]),
+                    (self.device.num_kpoints, self.local_energies.shape[0]),
                     dtype=xp.float64,
                 )
 
         for contact in self.device.contacts:
             self.observables.electron_ldos[contact] = xp.zeros(
-                (self.num_kpoints, self.num_orbitals, self.local_energies.shape[0]),
+                (
+                    self.device.num_kpoints,
+                    self.num_orbitals,
+                    self.local_energies.shape[0],
+                ),
                 dtype=xp.float64,
             )
 
@@ -1132,7 +1130,7 @@ class QTBM(TransportSolver):
                         axis=1,
                     )
                 )
-                / self.num_kpoints
+                / self.device.num_kpoints
                 * (2 * e / h)
             )
 
@@ -1308,10 +1306,10 @@ class QTBM(TransportSolver):
 
         comm.barrier()
 
-        for kpoint_ind, kpoint in enumerate(self.kpoints):
+        for kpoint_ind, kpoint in enumerate(self.device.kpoints):
             if comm.rank == 0:
                 print(
-                    f"Processing k-point {kpoint_ind+1} of {self.num_kpoints}",
+                    f"Processing k-point {kpoint_ind+1} of {self.device.num_kpoints}",
                     flush=True,
                 )
 

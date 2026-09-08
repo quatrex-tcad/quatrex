@@ -7,6 +7,7 @@ import numpy as np
 from qttools import NDArray, xp
 from qttools.boundary_conditions import lyapunov, obc
 from qttools.nevp import NEVP, Beyn, Full
+from quatrex.bandstructure.contact import contact_band_structure
 from quatrex.contact.base import BaseContact
 from quatrex.core.config import (
     LyapunovComputeConfig,
@@ -451,16 +452,13 @@ class SCBAContact(BaseContact):
 
     def compute_contact_bandstructure(
         self,
-        kpoint: NDArray,
         kpoints_transport: NDArray,
     ) -> NDArray:
-        """Computes the band structure for the contact at a given
-        k-point and along the transport direction.
+        """Computes the band structure for the contact along the
+        transport direction.
 
         Parameters
         ----------
-        kpoint : NDArray
-            The k-point at which to compute the band structure.
         kpoints_transport : NDArray
             The k-points along the transport direction.
 
@@ -470,7 +468,25 @@ class SCBAContact(BaseContact):
             The eigenvalues for the contact band structure.
 
         """
-        pass
+        h_xx = (
+            self.device.hamiltonians.blocks[*self.upper_inds[::-1]],
+            self.device.hamiltonians.blocks[*self.diagonal_inds],
+            self.device.hamiltonians.blocks[*self.upper_inds],
+        )
+
+        if self.device.overlap_matrices is not None:
+            s_xx = (
+                self.device.overlap_matrices.blocks[*self.upper_inds[::-1]],
+                self.device.overlap_matrices.blocks[*self.diagonal_inds],
+                self.device.overlap_matrices.blocks[*self.upper_inds],
+            )
+        else:
+            s_xx = None
+
+        e_k = contact_band_structure(kpoints_transport, h_xx, s_xx)
+        e_k = e_k.reshape(e_k.shape[0], -1, e_k.shape[-1])
+
+        return e_k
 
     def compute_contact_band_properties(
         self,

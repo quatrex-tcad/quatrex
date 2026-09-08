@@ -16,6 +16,7 @@ from qttools.utils.mpi_utils import distributed_load
 from quatrex.contact import BaseContact
 from quatrex.core.config import QuatrexConfig
 from quatrex.device.inputs import create_coordinate_grid, distributed_read_xyz
+from quatrex.grid import monkhorst_pack
 
 
 class BaseDevice:
@@ -42,11 +43,16 @@ class BaseDevice:
         Array of cumulative orbital counts, used to map from atoms to
         orbitals. orbital_offsets[i] gives the starting orbital index
         for atom i.
+    lattice_vectors : NDArray
+        Array of lattice vectors for the device.
     potential : NDArray, optional
         Array of electrostatic potential for each orbital. Can be either
         None if no potential is provided or a 1D array where the 1D
         index corresponds to the orbital index or the atom index
         depending on the shape of the provided potential.
+    kpoints : NDArray
+        Array of k-points for the device, generated using a Monkhorst-Pack
+        grid based on the configuration.
     contacts : list[BaseContact]
         List of Contact objects representing the semi-infinite leads
         connected to this device.
@@ -82,6 +88,11 @@ class BaseDevice:
             self.atomic_species,
             self.device_config.num_orbitals_per_atom,
         )
+
+        self.kpoints = monkhorst_pack(
+            self.device_config.kpoint_grid, self.device_config.kpoint_shift
+        )
+        self.num_kpoints = len(self.kpoints)
 
         # Child classes will initialize the Hamiltonian and contacts in
         # their own init methods
