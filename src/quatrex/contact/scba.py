@@ -319,14 +319,14 @@ class SCBAContact(BaseContact):
             )
 
         elif obc_config.algorithm == "spectral":
-            nevp = self._configure_nevp(obc_config, nevp_config)
+            block_sections = (
+                self.transport_repetitions if block_sections is None else block_sections
+            )
+
+            nevp = self._configure_nevp(obc_config, nevp_config, block_sections)
             obc_solver = obc.Spectral(
                 nevp=nevp,
-                block_sections=(
-                    self.transport_repetitions
-                    if block_sections is None
-                    else block_sections
-                ),
+                block_sections=block_sections,
                 min_decay=obc_config.min_decay,
                 max_decay=obc_config.max_decay,
                 num_ref_iterations=obc_config.num_ref_iterations,
@@ -358,6 +358,7 @@ class SCBAContact(BaseContact):
         self,
         obc_config: OBCConfig,
         nevp_config: NEVPConfig,
+        block_sections: int,
     ) -> NEVP:
         """Configures the Nonlinear Eigenvalue Problem (NEVP) solver.
 
@@ -369,6 +370,8 @@ class SCBAContact(BaseContact):
         nevp_config : NEVPConfig
             Configuration object containing NEVP solver settings
             including solver type and algorithm-specific parameters.
+        block_sections : int
+            Number of block sections to use in the OBC solver.
 
         Returns
         -------
@@ -378,8 +381,8 @@ class SCBAContact(BaseContact):
         """
         if obc_config.nevp_solver == "beyn":
             return Beyn(
-                r_o=obc_config.r_o,
-                r_i=obc_config.r_i,
+                r_o=obc_config.r_o ** (1 / block_sections),
+                r_i=obc_config.r_i ** (1 / block_sections),
                 m_0=obc_config.m_0,
                 num_quad_points=obc_config.num_quad_points,
                 num_threads_contour=nevp_config.num_threads_contour,

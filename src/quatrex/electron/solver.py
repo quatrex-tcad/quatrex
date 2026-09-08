@@ -612,7 +612,6 @@ class ElectronSolver(SubsystemSolver):
 
         # Prepare Buffers for OBC.
         self.obc_blocks = OBCBlocks(num_blocks=device.hamiltonians.num_local_blocks)
-        self.block_sections = config.electron.obc.block_sections
 
         self.meir_wingreen_current = None
         self.device_current = None
@@ -659,30 +658,21 @@ class ElectronSolver(SubsystemSolver):
 
     def _compute_contact_obc(
         self,
-        contact: str,
-        diagonal_inds: tuple,
-        upper_inds: tuple,
+        contact: SCBAContact,
+        contact_str: str,
         occupancies: NDArray,
-        order: str | NDArray | None = None,
     ) -> tuple[NDArray, NDArray, NDArray]:
         """Computes the OBC for a specific contact.
 
         Parameters
         ----------
-        contact : str
+        contact : SCBAContact
+            The contact for which to compute the OBC.
+        contact_str : str
             The contact for which to compute the OBC.
             Used for profiling and caching purposes.
-        diagonal_inds : tuple
-            The indices of the diagonal blocks corresponding to the contact.
-        upper_inds : tuple
-            The indices of the upper off-diagonal blocks corresponding to the contact.
         occupancies : NDArray
             The occupancies of the contact at the local energies.
-        order : str | NDArray | None, optional
-            The permutation of the blocks to achieve the same order as the canonical left contact.
-            If None, the left contact order is assumed.
-            Instead of an explicit permutation, the string "reverse" can be passed
-            to reverse the order of the blocks, which is equivalent to the right contact order.
 
         Returns
         -------
@@ -694,7 +684,11 @@ class ElectronSolver(SubsystemSolver):
             The greater OBC for the contact.
 
         """
-
+        obc_solver = contact.obc_solvers["electron"]
+        order = contact.order
+        block_sections = contact.transport_repetitions
+        diagonal_inds = contact.diagonal_inds
+        upper_inds = contact.upper_inds
         inverse_order = get_inverse_order(order)
 
         m_10, m_00, m_01 = periodize_layer(
@@ -703,7 +697,7 @@ class ElectronSolver(SubsystemSolver):
                 order_block(self.system_matrix.blocks[*diagonal_inds], order),
                 order_block(self.system_matrix.blocks[*upper_inds], order),
             ),
-            block_sections=self.block_sections,
+            block_sections=block_sections,
         )
 
         if self.device.overlap_matrices is None:
@@ -723,9 +717,9 @@ class ElectronSolver(SubsystemSolver):
             s_01 = 1j * self.eta_obc * self.device.overlap_matrices.blocks[*upper_inds]
 
         # TODO: use residuals to filter "bad" energies
-        g_00, *__ = self.obc(
+        g_00, *__ = obc_solver(
             (m_10 + s_10, m_00 + s_00, m_01 + s_01),
-            contact="G: " + contact,
+            contact="G: " + contact_str,
         )
         # Apply the retarded boundary self-energy.
         sigma_00 = m_10 @ g_00 @ m_01
@@ -752,34 +746,17 @@ class ElectronSolver(SubsystemSolver):
             The slice of the energy stack corresponding to the current batch.
 
         """
-        if comm.block.rank == 0:
-            obc_retarded, obc_lesser, obc_greater = self._compute_contact_obc(
-                contact="left-" + str(batch_slice),
-                diagonal_inds=(0, 0),
-                upper_inds=(0, 1),
-                occupancies=self.occupancies[self.device.contacts[0]][
-                    batch_slice
-                ],  # HACK
-            )
-            self.obc_blocks.retarded[0] = obc_retarded
-            self.obc_blocks.lesser[0] = obc_lesser
-            self.obc_blocks.greater[0] = obc_greater
-
-        if comm.block.rank == comm.block.size - 1:
-            n = self.device.hamiltonians.num_local_blocks - 1
-            m = n - 1
-            obc_retarded, obc_lesser, obc_greater = self._compute_contact_obc(
-                contact="right-" + str(batch_slice),
-                diagonal_inds=(n, n),
-                upper_inds=(n, m),
-                occupancies=self.occupancies[self.device.contacts[-1]][
-                    batch_slice
-                ],  # HACK
-                order="reverse",
-            )
-            self.obc_blocks.retarded[-1] = obc_retarded
-            self.obc_blocks.lesser[-1] = obc_lesser
-            self.obc_blocks.greater[-1] = obc_greater
+        for contact in self.device.contacts:
+            if comm.block.rank == contact.owning_rank:
+                obc_retarded, obc_lesser, obc_greater = self._compute_contact_obc(
+                    contact=contact,
+                    contact_str=f"{contact.name}-" + str(batch_slice),
+                    occupancies=self.occupancies[contact][batch_slice],
+                )
+                idx = contact.diagonal_inds[0]
+                self.obc_blocks.retarded[idx] = obc_retarded
+                self.obc_blocks.lesser[idx] = obc_lesser
+                self.obc_blocks.greater[idx] = obc_greater
 
     @profiler.profile(label="ElectronSolver: Assemble", level="default", comm=comm)
     def _assemble_system_matrix(
@@ -920,6 +897,7 @@ class ElectronSolver(SubsystemSolver):
                             diagonal_inds=contact.diagonal_inds,
                             upper_inds=contact.upper_inds,
                             order=contact.order,
+                            block_sections=contact.transport_repetitions,
                             band_edge_config=self.config.compute.band_edge,
                         )
                     comm.block.bcast(band_edges, root=contact.owning_rank)

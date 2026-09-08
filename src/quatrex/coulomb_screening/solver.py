@@ -19,7 +19,7 @@ from qttools.toeplitz.toeplitz import (
 from qttools.utils.mpi_utils import get_section_sizes
 from qttools.utils.solvers_utils import get_batches
 from qttools.utils.sparse_utils import product_sparsity_pattern_dsdbsparse
-from quatrex.contact.scba import get_inverse_order, order_block
+from quatrex.contact.scba import SCBAContact, get_inverse_order, order_block
 from quatrex.core.config import QuatrexConfig
 from quatrex.core.subsystem import SubsystemSolver
 from quatrex.device import SCBADevice
@@ -76,7 +76,10 @@ class CoulombScreeningSolver(SubsystemSolver):
 
         sparsity_pattern = device.sparsity_pattern
 
-        self.num_connected_blocks = device.coulomb_num_connected_blocks
+        # NOTE: In the general case, this should not be an attribute of the device,
+        # but of the contacts. The bandwidth inside the device could arbitrary change
+        # and we would need to find a new correct tiling.
+        self.num_connected_blocks = self.device.coulomb_num_connected_blocks
 
         # Check that the provided block sizes match the coulomb matrix.
         if self.small_block_sizes.sum() != self.coulomb_matrix.shape[-2]:
@@ -151,19 +154,6 @@ class CoulombScreeningSolver(SubsystemSolver):
 
         self.obc_blocks = OBCBlocks(num_blocks=self.system_matrix.num_local_blocks)
 
-        self.block_sections = config.coulomb_screening.obc.block_sections
-        if (
-            self.block_sections % self.num_connected_blocks != 0
-            and self.block_sections != 1
-        ):
-            raise ValueError(
-                f"Block sections must be divisible by {self.num_connected_blocks} or equal to 1."
-            )
-        if self.block_sections == 1:
-            self.small_block_sections = 1
-        else:
-            self.small_block_sections = self.block_sections // self.num_connected_blocks
-
         self.flatband = config.electron.flatband
         self.solve_call_count = 0
         self.filtering_iteration_limit = (
@@ -187,19 +177,19 @@ class CoulombScreeningSolver(SubsystemSolver):
 
     def _compute_contact_obc(
         self,
-        contact: str,
+        contact: SCBAContact,
+        contact_str: str,
         p_lesser: DSDBSparse | _DStackView,
         p_greater: DSDBSparse | _DStackView,
         p_retarded: DSDBSparse | _DStackView,
-        diagonal_inds: tuple,
-        upper_inds: tuple,
-        order: str | NDArray | None = None,
     ) -> tuple[NDArray, NDArray, NDArray]:
         """Computes the OBC for a specific contact.
 
         Parameters
         ----------
-        contact : str
+        contact : SCBAContact
+            The contact for which to compute the OBC.
+        contact_str : str
             The contact for which to compute the OBC.
             Used for profiling and caching purposes.
         p_lesser : DSDBSparse | _DStackView
@@ -208,15 +198,6 @@ class CoulombScreeningSolver(SubsystemSolver):
             The greater polarization.
         p_retarded : DSDBSparse | _DStackView
             The retarded polarization.
-        diagonal_inds : tuple
-            The indices of the diagonal blocks corresponding to the contact.
-        upper_inds : tuple
-            The indices of the upper off-diagonal blocks corresponding to the contact.
-        order : str | NDArray | None, optional
-            The permutation of the blocks to achieve the same order as the canonical left contact.
-            If None, the left contact order is assumed.
-            Instead of an explicit permutation, the string "reverse" can be passed
-            to reverse the order of the blocks, which is equivalent to the right contact order.
 
         Returns
         -------
@@ -228,31 +209,41 @@ class CoulombScreeningSolver(SubsystemSolver):
             The greater OBC for the contact.
 
         """
-
+        # NOTE: I prefer to pass the contact instead of passing in all
+        # the parameters separately. The contact string is separate
+        # since the batch is not known here.
+        order = contact.order
         inverse_order = get_inverse_order(order)
+        obc_solver = contact.obc_solvers["coulomb_screening"]
+        lyapunov_solver = contact.lyapunov_solvers["coulomb_screening"]
+        block_sections = contact.transport_repetitions
 
         with profiler.profile_range(
-            label=f"CoulombScreeningSolver: Get OBCR blocks {contact}",
+            label=f"CoulombScreeningSolver: Get OBCR blocks {contact_str}",
             level="default",
             comm=comm.stack,
         ):
 
             p_retarded_10, p_retarded_00, p_retarded_01 = periodize_repeat_layer(
                 (
-                    order_block(p_retarded.blocks[*upper_inds[::-1]], order),
-                    order_block(p_retarded.blocks[*diagonal_inds], order),
-                    order_block(p_retarded.blocks[*upper_inds], order),
+                    order_block(p_retarded.blocks[*contact.upper_inds[::-1]], order),
+                    order_block(p_retarded.blocks[*contact.diagonal_inds], order),
+                    order_block(p_retarded.blocks[*contact.upper_inds], order),
                 ),
-                block_sections=self.small_block_sections,
+                block_sections=block_sections,
                 repetitions=self.num_connected_blocks,
             )
             v_10, v_00, v_01 = periodize_repeat_layer(
                 (
-                    order_block(self.coulomb_matrix.blocks[*upper_inds[::-1]], order),
-                    order_block(self.coulomb_matrix.blocks[*diagonal_inds], order),
-                    order_block(self.coulomb_matrix.blocks[*upper_inds], order),
+                    order_block(
+                        self.coulomb_matrix.blocks[*contact.upper_inds[::-1]], order
+                    ),
+                    order_block(
+                        self.coulomb_matrix.blocks[*contact.diagonal_inds], order
+                    ),
+                    order_block(self.coulomb_matrix.blocks[*contact.upper_inds], order),
                 ),
-                block_sections=self.small_block_sections,
+                block_sections=block_sections,
                 repetitions=self.num_connected_blocks,
             )
 
@@ -269,18 +260,18 @@ class CoulombScreeningSolver(SubsystemSolver):
             m_10 = -v_10 @ p_retarded_00 - v_00 @ p_retarded_10
 
         with profiler.profile_range(
-            label=f"CoulombScreeningSolver: OBCR {contact}",
+            label=f"CoulombScreeningSolver: OBCR {contact_str}",
             level="default",
             comm=comm.stack,
         ):
 
-            x_00, *__ = self.obc((m_10, m_00, m_01), contact="W: " + contact)
+            x_00, *__ = obc_solver((m_10, m_00, m_01), contact="W: " + contact_str)
 
             m_10_x_00 = m_10 @ x_00
             obc_retarded = m_10_x_00 @ m_01
 
         with profiler.profile_range(
-            label=f"CoulombScreeningSolver: Get Lyapunov blocks {contact}",
+            label=f"CoulombScreeningSolver: Get Lyapunov blocks {contact_str}",
             level="default",
             comm=comm.stack,
         ):
@@ -288,11 +279,11 @@ class CoulombScreeningSolver(SubsystemSolver):
             def _get_l_superblocks(p_):
                 p_10, p_00, p_01 = periodize_repeat_layer(
                     (
-                        order_block(p_.blocks[*upper_inds[::-1]], order),
-                        order_block(p_.blocks[*diagonal_inds], order),
-                        order_block(p_.blocks[*upper_inds], order),
+                        order_block(p_.blocks[*contact.upper_inds[::-1]], order),
+                        order_block(p_.blocks[*contact.diagonal_inds], order),
+                        order_block(p_.blocks[*contact.upper_inds], order),
                     ),
-                    block_sections=self.small_block_sections,
+                    block_sections=block_sections,
                     repetitions=self.num_connected_blocks,
                 )
                 l_00 = (
@@ -317,7 +308,7 @@ class CoulombScreeningSolver(SubsystemSolver):
             l_greater_00, l_greater_01 = _get_l_superblocks(p_greater)
 
         with profiler.profile_range(
-            label=f"CoulombScreeningSolver: Lyapunov {contact}",
+            label=f"CoulombScreeningSolver: Lyapunov {contact_str}",
             level="default",
             comm=comm.stack,
         ):
@@ -339,7 +330,7 @@ class CoulombScreeningSolver(SubsystemSolver):
             b_00 = x_00 @ m_10
             q_00 = xp.stack((q_00_lesser, q_00_greater))
 
-            w_00, *__ = self.lyapunov((b_00, q_00), "W: " + contact)
+            w_00, *__ = lyapunov_solver((b_00, q_00), "W: " + contact_str)
 
             m_w_m = m_10 @ w_00 @ m_10.conj().swapaxes(-1, -2)
 
@@ -395,35 +386,23 @@ class CoulombScreeningSolver(SubsystemSolver):
             The slice of the energy stack corresponding to the current batch.
 
         """
-        if comm.block.rank == 0:
-            obc_retarded, obc_lesser, obc_greater = self._compute_contact_obc(
-                contact="left-" + str(batch_slice),
-                p_lesser=p_lesser,
-                p_greater=p_greater,
-                p_retarded=p_retarded,
-                diagonal_inds=(0, 0),
-                upper_inds=(0, 1),
-            )
-            self.obc_blocks.retarded[0] = obc_retarded
-            self.obc_blocks.lesser[0] = obc_lesser
-            self.obc_blocks.greater[0] = obc_greater
-
-        if comm.block.rank == comm.block.size - 1:
-
-            n = p_retarded.num_local_blocks - 1
-            m = n - 1
-            obc_retarded, obc_lesser, obc_greater = self._compute_contact_obc(
-                contact="right-" + str(batch_slice),
-                p_lesser=p_lesser,
-                p_greater=p_greater,
-                p_retarded=p_retarded,
-                diagonal_inds=(n, n),
-                upper_inds=(n, m),
-                order="reverse",
-            )
-            self.obc_blocks.retarded[-1] = obc_retarded
-            self.obc_blocks.lesser[-1] = obc_lesser
-            self.obc_blocks.greater[-1] = obc_greater
+        for contact in self.device.contacts:
+            if comm.block.rank == contact.owning_rank:
+                # NOTE: Probably a specific "coulomb_order" is needed
+                # since the blocks are bigger.
+                # Only needed for a third contact.
+                obc_retarded, obc_lesser, obc_greater = self._compute_contact_obc(
+                    contact=contact,
+                    contact_str=f"{contact.name}-" + str(batch_slice),
+                    p_lesser=p_lesser,
+                    p_greater=p_greater,
+                    p_retarded=p_retarded,
+                )
+                # TODO: This is only correct in the case of a periodic device.
+                idx = contact.diagonal_inds[0] // self.num_connected_blocks
+                self.obc_blocks.retarded[idx] = obc_retarded
+                self.obc_blocks.lesser[idx] = obc_lesser
+                self.obc_blocks.greater[idx] = obc_greater
 
     @profiler.profile(
         label="CoulombScreeningSolver: Assemble Pr", level="default", comm=comm
@@ -477,9 +456,7 @@ class CoulombScreeningSolver(SubsystemSolver):
 
     def _contact_spillover_matmul(
         self,
-        diagonal_inds: tuple,
-        upper_inds: tuple,
-        order: str | NDArray | None = None,
+        contact: SCBAContact,
     ):
         r"""Applies the spillover correction to
 
@@ -489,17 +466,14 @@ class CoulombScreeningSolver(SubsystemSolver):
 
         Parameters
         ----------
-        diagonal_inds : tuple
-            The indices of the diagonal blocks corresponding to the contact.
-        upper_inds : tuple
-            The indices of the upper off-diagonal blocks corresponding to the contact.
-        order : str | NDArray | None, optional
-            The permutation of the blocks to achieve the same order as the canonical left contact.
-            If None, the left contact order is assumed.
-            Instead of an explicit permutation, the string "reverse" can be passed
-            to reverse the order of the blocks, which is equivalent to the right contact order.
+        contact : SCBAContact
+            The contact for which to apply the spillover correction.
 
         """
+        order = contact.order
+        upper_inds = contact.upper_inds
+        diagonal_inds = contact.diagonal_inds
+        block_sections = contact.transport_repetitions
 
         inverse_order = get_inverse_order(order)
 
@@ -509,7 +483,7 @@ class CoulombScreeningSolver(SubsystemSolver):
                 order_block(self.coulomb_matrix.blocks[*diagonal_inds], order),
                 order_block(self.coulomb_matrix.blocks[*upper_inds], order),
             ),
-            block_sections=self.small_block_sections,
+            block_sections=block_sections,
         )
         __, __, p_01 = periodize_layer(
             (
@@ -517,7 +491,7 @@ class CoulombScreeningSolver(SubsystemSolver):
                 order_block(self.p_retarded.blocks[*diagonal_inds], order),
                 order_block(self.p_retarded.blocks[*upper_inds], order),
             ),
-            block_sections=self.small_block_sections,
+            block_sections=block_sections,
         )
         self.system_matrix.blocks[*diagonal_inds] += order_block(
             v_10 @ p_01, inverse_order
@@ -546,20 +520,9 @@ class CoulombScreeningSolver(SubsystemSolver):
         )
         # apply spillover correction to the system matrix.
         # This is necessary because infinite leads are assumed.
-        if comm.block.rank == 0:
-            self._contact_spillover_matmul(
-                diagonal_inds=(0, 0),
-                upper_inds=(0, 1),
-            )
-
-        if comm.block.rank == comm.block.size - 1:
-            n = self.system_matrix.num_local_blocks - 1
-            m = n - 1
-            self._contact_spillover_matmul(
-                diagonal_inds=(n, n),
-                upper_inds=(n, m),
-                order="reverse",
-            )
+        for contact in self.device.contacts:
+            if comm.block.rank == contact.owning_rank:
+                self._contact_spillover_matmul(contact=contact)
 
         xp.negative(self.system_matrix.data, out=self.system_matrix.data)
         self.system_matrix.fill_diagonal(self.system_matrix.diagonal() + 1.0)
@@ -568,9 +531,7 @@ class CoulombScreeningSolver(SubsystemSolver):
         self,
         p_: DSDBSparse | _DStackView,
         l_: DSDBSparse | _DStackView,
-        diagonal_inds: tuple,
-        upper_inds: tuple,
-        order: str | NDArray | None = None,
+        contact: SCBAContact,
     ) -> None:
         r"""Applies the spillover correction to
 
@@ -585,18 +546,14 @@ class CoulombScreeningSolver(SubsystemSolver):
         l_ : DSDBSparse | _DStackView
             The matrix to which the spillover correction will be applied (either
             `l_lesser` or `l_greater`).
-        diagonal_inds : tuple
-            The indices of the diagonal blocks corresponding to the contact.
-        upper_inds : tuple
-            The indices of the upper off-diagonal blocks corresponding to the contact.
-        order : str | NDArray | None, optional
-            The permutation of the blocks to achieve the same order as the canonical left contact.
-            If None, the left contact order is assumed.
-            Instead of an explicit permutation, the string "reverse" can be passed
-            to reverse the order of the blocks, which is equivalent to the right contact order.
+        contact : SCBAContact
+            The contact for which to apply the spillover correction.
 
         """
-
+        order = contact.order
+        block_sections = contact.transport_repetitions
+        diagonal_inds = contact.diagonal_inds
+        upper_inds = contact.upper_inds
         inverse_order = get_inverse_order(order)
 
         v_10, v_00, v_01 = periodize_layer(
@@ -605,7 +562,7 @@ class CoulombScreeningSolver(SubsystemSolver):
                 order_block(self.coulomb_matrix.blocks[*diagonal_inds], order),
                 order_block(self.coulomb_matrix.blocks[*upper_inds], order),
             ),
-            block_sections=self.small_block_sections,
+            block_sections=block_sections,
         )
 
         p_10, p_00, p_01 = periodize_layer(
@@ -614,7 +571,7 @@ class CoulombScreeningSolver(SubsystemSolver):
                 order_block(p_.blocks[*diagonal_inds], order),
                 order_block(p_.blocks[*upper_inds], order),
             ),
-            block_sections=self.small_block_sections,
+            block_sections=block_sections,
         )
 
         l_.blocks[*diagonal_inds] += order_block(
@@ -647,26 +604,13 @@ class CoulombScreeningSolver(SubsystemSolver):
 
         """
 
-        if comm.block.rank == 0:
-            self._contact_spillover_sandwich(
-                p_=p_,
-                l_=l_,
-                diagonal_inds=(0, 0),
-                upper_inds=(0, 1),
-            )
-
-        if comm.block.rank == comm.block.size - 1:
-            n = self.system_matrix.num_local_blocks - 1
-            m = n - 1
-            self._contact_spillover_sandwich(
-                p_=p_,
-                l_=l_,
-                # NOTE: Order of inds is reversed for the right contact
-                # i.e. `upper_inds` is not `(m, n)`
-                diagonal_inds=(n, n),
-                upper_inds=(n, m),
-                order="reverse",
-            )
+        for contact in self.device.contacts:
+            if comm.block.rank == contact.owning_rank:
+                self._contact_spillover_sandwich(
+                    p_=p_,
+                    l_=l_,
+                    contact=contact,
+                )
 
     def _filter_peaks(self, out: tuple[DSDBSparse, ...]) -> None:
         """Filters out peaks in the Green's functions.

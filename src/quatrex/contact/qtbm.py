@@ -726,8 +726,8 @@ class QTBMContact(BaseContact):
         """
         if obc_config.nevp_solver == "beyn":
             return Beyn(
-                r_o=obc_config.r_o,
-                r_i=obc_config.r_i,
+                r_o=obc_config.r_o ** (1 / self.transport_repetitions),
+                r_i=obc_config.r_i ** (1 / self.transport_repetitions),
                 m_0=obc_config.m_0,
                 num_quad_points=obc_config.num_quad_points,
                 num_threads_contour=nevp_config.num_threads_contour,

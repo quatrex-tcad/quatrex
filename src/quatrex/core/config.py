@@ -583,8 +583,8 @@ class OBCConfig(BaseModel):
     = 0,
     $$
 
-    where $b$ is the number of [`block_sections`](#block_sections), and
-    $\hat{\mathbf{m}}_{n}$ are potentially reduced coupling matrices.
+    where $b$ is the number of sections, and $\hat{\mathbf{m}}_{n}$ are
+    potentially reduced coupling matrices.
 
     From selected eigenvalues $\lambda = e^{i k}$ and eigenvectors
     $\mathbf{v}$, the surface Green's functions can be constructed.
@@ -606,29 +606,6 @@ class OBCConfig(BaseModel):
     [^beyn]: W.-J. Beyn, An integral method for solving nonlinear
         eigenvalue problems, Linear Algebra and its Applications, 2012,
         https://doi.org/10.1016/j.laa.2011.03.030.
-
-    """
-
-    block_sections: PositiveInt = 1
-    """The number of unit cell blocks along transport direction.
-
-    !!! note
-        This is automatically determined in QTBM calculations. Thus it
-        only has an effect in NEGF calculations.
-
-    In NEGF calculations, one needs to define block-sizes that lead to a
-    block-tridiagonal tiling of the system matrix. These *transport
-    blocks* are sometimes constructed from multiple unit cells.
-
-    With the [`block_sections`](#block_sections) parameter, one can
-    specify how many unit cells are merged into a single transport
-    block. This is then used when [`nevp_solver`](#nevp_solver) is set
-    to `"beyn"` to reduce the size of the contact NEVP.
-
-    For example, if the transport cell is constructed from two unit
-    cells along the transport direction, setting `block_sections = 2`
-    will halve the size of the NEVP. The contact transport blocks need
-    to be sorted accordingly.
 
     """
 
@@ -808,14 +785,6 @@ class OBCConfig(BaseModel):
         """Sets the max decay if not already set."""
         if self.max_decay is None:
             self.max_decay = 1.5 * np.log(self.r_o)
-
-        return self
-
-    @model_validator(mode="after")
-    def scale_contour_radii(self) -> Self:
-        """Scales the contour radii based on block_sections."""
-        self.r_o **= 1 / self.block_sections
-        self.r_i **= 1 / self.block_sections
 
         return self
 
@@ -2030,10 +1999,6 @@ class BandEdgeConfig(BaseModel):
     `True`.
 
     """
-
-    block_sections: PositiveInt = 1
-    """The number of block sections to use when computing the band
-    edges."""
 
     num_ref_iterations: PositiveInt = 2
     """The number of refinement iterations to use when computing the

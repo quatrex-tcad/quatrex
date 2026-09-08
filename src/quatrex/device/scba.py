@@ -4,7 +4,7 @@
 
 import numpy as np
 
-from qttools import NDArray
+from qttools import NDArray, sparse
 from qttools.comm import comm
 from qttools.datastructures import DSDBSparse
 from qttools.profiling import Profiler
@@ -55,7 +55,9 @@ class SCBADevice(BaseDevice):
 
     def __init__(self, config: QuatrexConfig) -> None:
         super().__init__(config)
-        self.hamiltonians, self.overlap_matrices = self._init_hamiltonian()
+        self.hamiltonians, self.overlap_matrices, hamiltonian_sparsity_pattern = (
+            self._init_hamiltonian()
+        )
         self.block_sizes = self.hamiltonians.block_sizes
 
         self._allocate_sparsity_pattern()
@@ -70,10 +72,17 @@ class SCBADevice(BaseDevice):
 
         # NOTE: Contacts are added at the end since the need parameters
         # from the previous method.
-        self._add_contacts()
+        self._add_contacts(hamiltonian_sparsity_pattern)
 
-    def _add_contacts(self):
+    def _add_contacts(self, hamiltonian_sparsity_pattern: sparse.coo_matrix):
         """Initializes and attaches contacts to the device.
+
+        Parameters
+        ----------
+        hamiltonian_sparsity_pattern : sparse.coo_matrix
+            Sparsity pattern of the device Hamiltonian, used to
+            determine the periodicity of the contacts and their coupling
+            to the device.
 
         Creates Contact objects for each contact defined in the device
         configuration. Each contact represents a semi-infinite lead
@@ -88,7 +97,7 @@ class SCBADevice(BaseDevice):
                 SCBAContact(
                     device=self,
                     contact_config=contact_config,
-                    sparsity_pattern=self.sparsity_pattern.tocsr(),
+                    sparsity_pattern=hamiltonian_sparsity_pattern.tocsr(),
                 )
             )
 
@@ -98,11 +107,13 @@ class SCBADevice(BaseDevice):
                 flush=True,
             )
 
-    def _init_hamiltonian(self) -> tuple[DSDBSparse, DSDBSparse | None]:
+    def _init_hamiltonian(
+        self,
+    ) -> tuple[DSDBSparse, DSDBSparse | None, sparse.coo_matrix]:
         """Initializes Hamiltonian and overlap matrices from files."""
 
         # Load the device Hamiltonian.
-        hamiltonians, __ = assemble_matrix(
+        hamiltonians, hamiltonian_sparsity_pattern = assemble_matrix(
             config=self.config,
             matrix_name="hamiltonian",
             sparsity_pattern=None,
@@ -132,7 +143,7 @@ class SCBADevice(BaseDevice):
             if comm.rank == 0:
                 print("No overlap matrix found. Assuming orthogonal basis.", flush=True)
 
-        return hamiltonians, overlap_matrices
+        return hamiltonians, overlap_matrices, hamiltonian_sparsity_pattern
 
     @profiler.profile("Device: Sparsity Pattern", level="default", comm=comm)
     def _allocate_sparsity_pattern(self):

@@ -67,7 +67,6 @@ solver.max_batch_size = 20
 
 obc.algorithm = "spectral"
 obc.nevp_solver = "full"
-obc.block_sections = 1
 
 # Parameters for Beyn's method.
 obc.num_ref_iterations = 2
@@ -96,7 +95,6 @@ solver.max_batch_size = 25
 
 obc.algorithm = "spectral"
 obc.nevp_solver = "full"
-obc.block_sections = 1
 
 # Parameters for Beyn's method.
 obc.num_ref_iterations = 2
