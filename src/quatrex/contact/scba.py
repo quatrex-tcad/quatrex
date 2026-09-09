@@ -244,6 +244,33 @@ class SCBAContact(BaseContact):
     def _analyze_real_space(self):
         """Map the contact indices to the corresponding blocks."""
         ny, nz = self.transverse_repetition_grid
+
+        contact_size = sum(
+            len(self.unit_cell_orbital_indices[i, j, k])
+            for i, j, k in np.ndindex(self.transport_repetitions, ny, nz)
+        )
+        if np.min(self.unit_cell_orbital_indices[0, 0, 0]) == 0:
+            if contact_size != self.device.block_sizes[0]:
+                raise ValueError(
+                    "The contact indices do not match the first block of the Hamiltonian.\n"
+                    f"Contact size: {contact_size}, first block size: {self.device.block_sizes[0]}"
+                )
+        elif (
+            np.max(self.unit_cell_orbital_indices[0, 0, 0])
+            == self.device.hamiltonians.shape[-1] - 1
+        ):
+            if contact_size != self.device.block_sizes[-1]:
+                raise ValueError(
+                    "The contact indices do not match the last block of the Hamiltonian."
+                    f"Contact size: {contact_size}, last block size: {self.device.block_sizes[-1]}"
+                )
+        else:
+            raise ValueError(
+                "The contact indices cannot be matched\n"
+                "since they do not correspond to either the first"
+                "or last block of the Hamiltonian."
+            )
+
         indices = np.concatenate(
             [
                 self.unit_cell_orbital_indices[i, j, k]
@@ -308,13 +335,6 @@ class SCBAContact(BaseContact):
             self.upper_inds = (n, m)
             self.order = "reverse"
             self.owning_rank = comm.block.size - 1
-
-        else:
-            raise ValueError(
-                "The contact indices cannot be matched\n"
-                "since they do not correspond to either the first"
-                "or last block of the Hamiltonian."
-            )
 
         # TODO validate that contacts do not span multiple ranks
 

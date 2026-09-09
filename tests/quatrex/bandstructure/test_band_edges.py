@@ -306,10 +306,10 @@ def test_overlap(
         L_inv = xp.linalg.inv(L)
 
         block_sizes = hamiltonian.block_sizes
-        hamiltonian = hamiltonian.to_dense()
-        sigma_dummy = sigma_dummy.to_dense()
+        _hamiltonian = hamiltonian.to_dense()
+        _sigma_dummy = sigma_dummy.to_dense()
 
-        L_inv_full = xp.zeros_like(hamiltonian)
+        L_inv_full = xp.zeros_like(_hamiltonian)
         for i in range(len(block_sizes)):
             L_inv_full[
                 ...,
@@ -317,20 +317,20 @@ def test_overlap(
                 i * block_sizes[0] : (i + 1) * block_sizes[0],
             ] = L_inv
 
-        hamiltonian_hat = L_inv_full @ hamiltonian @ L_inv_full.swapaxes(-2, -1).conj()
+        hamiltonian_hat = L_inv_full @ _hamiltonian @ L_inv_full.swapaxes(-2, -1).conj()
 
         # NOTE: a mock class is used since it is not so straightforward
         # to do the correct DSDBSparse -> dense -> DSDBSparse conversion with the current API.
-        hamiltonian = MockDSDBSparse(hamiltonian_hat, block_sizes)
-        sigma_dummy = MockDSDBSparse(sigma_dummy, block_sizes)
+        _hamiltonian = MockDSDBSparse(hamiltonian_hat, block_sizes)
+        _sigma_dummy = MockDSDBSparse(_sigma_dummy, block_sizes)
 
         e_0_test = _compute_eigenvalues(
             target_energy=TARGET_ENERGY,
             energies=energies,
-            hamiltonian=hamiltonian,
+            hamiltonian=_hamiltonian,
             overlap=None,
             potential=xp.zeros_like(potential),
-            sigma_retarded_hermitian=sigma_dummy,
+            sigma_retarded_hermitian=_sigma_dummy,
             ind_lower=ind_lower,
             ind_upper=ind_upper,
             rank_lower=0,

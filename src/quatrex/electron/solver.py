@@ -600,15 +600,15 @@ class ElectronSolver(SubsystemSolver):
 
         self.delta_fermi_level_conduction_band = {}
         self.occupancies = {}
-        if self.band_edge_tracking:
-            for contact in self.device.contacts:
+        for contact in self.device.contacts:
+            if self.band_edge_tracking:
                 self.delta_fermi_level_conduction_band[contact] = (
                     contact.conduction_band_edge - contact.fermi_level
                 )
-                mu = contact.fermi_level - contact.voltage
-                self.occupancies[contact] = fermi_dirac(
-                    self.local_energies - mu, contact.temperature
-                )
+            mu = contact.fermi_level - contact.voltage
+            self.occupancies[contact] = fermi_dirac(
+                self.local_energies - mu, contact.temperature
+            )
 
         # Prepare Buffers for OBC.
         self.obc_blocks = OBCBlocks(num_blocks=device.hamiltonians.num_local_blocks)
