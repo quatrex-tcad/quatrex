@@ -225,64 +225,105 @@ class SCBAContact(BaseContact):
         # TODO: Allocate OBC solver for the other systems (photons /
         # phonons) when needed.
 
-    def _analyze_contact_indices(self):
+    def _analyze_from_unit(self):
         """Map the contact indices to the corresponding blocks."""
+        contact_name = self.name
+        if contact_name == "left":
+            self.diagonal_inds = (0, 0)
+            self.upper_inds = (0, 1)
+            self.order = None
+            self.owning_rank = 0
+        elif contact_name == "right":
+            n = self.device.hamiltonians.num_local_blocks - 1
+            m = n - 1
+            self.diagonal_inds = (n, n)
+            self.upper_inds = (n, m)
+            self.order = "reverse"
+            self.owning_rank = comm.block.size - 1
 
-        if self.contact_config._contact_finder_method == "from_unit":
-            contact_name = self.name
-            if contact_name == "left":
-                self.diagonal_inds = (0, 0)
-                self.upper_inds = (0, 1)
-                self.order = None
-                self.owning_rank = 0
-            elif contact_name == "right":
-                n = self.device.hamiltonians.num_local_blocks - 1
-                m = n - 1
-                self.diagonal_inds = (n, n)
-                self.upper_inds = (n, m)
-                self.order = "reverse"
-                self.owning_rank = comm.block.size - 1
-        elif self.contact_config._contact_finder_method == "real_space":
-            ny, nz = self.transverse_repetition_grid
-            indices = np.concatenate(
-                [
-                    self.unit_cell_orbital_indices[i, j, k]
-                    for i, j, k in np.ndindex(self.transport_repetitions + 1, ny, nz)
-                ]
+    def _analyze_real_space(self):
+        """Map the contact indices to the corresponding blocks."""
+        ny, nz = self.transverse_repetition_grid
+        indices = np.concatenate(
+            [
+                self.unit_cell_orbital_indices[i, j, k]
+                for i, j, k in np.ndindex(self.transport_repetitions + 1, ny, nz)
+            ]
+        )
+
+        # Check that the indices are contiguous i.e. no gaps
+        sorted_indices = np.sort(indices)
+        if not np.all(np.diff(sorted_indices) == 1):
+            raise ValueError(
+                "The contact indices are not contiguous.\n"
+                "This is currently not supported for real-space contacts in SCBA."
             )
 
-            # Check that the indices are contiguous i.e. no gaps
-            sorted_indices = np.sort(indices)
+        # To correctly subslice, they also need to be contiguous in each layer.
+        for i, j, k in np.ndindex(self.transport_repetitions + 1, ny, nz):
+            sorted_indices = np.sort(self.unit_cell_orbital_indices[i, j, k])
             if not np.all(np.diff(sorted_indices) == 1):
                 raise ValueError(
                     "The contact indices are not contiguous.\n"
                     "This is currently not supported for real-space contacts in SCBA."
                 )
 
-            # TODO: Currently we do not allow orders except None and "reverse"
-            # i.e. with real space only left and right are supported
-            # where the hamiltonian is already correctly sorted.
+        # TODO: Currently we do not allow orders except None and "reverse"
+        # i.e. with real space only left and right are supported
+        # where the hamiltonian is already correctly sorted.
 
-            # TODO: Check if indices are ascending or descending
-            # TODO: These checks are not robust and should be improved
-            # to handle more general cases.
-            if np.min(indices) == 0:
-                self.order = None
-                self.diagonal_inds = (0, 0)
-                self.upper_inds = (0, 1)
-                self.owning_rank = 0
+        # TODO: These checks are not robust and should be improved
+        # to handle more general cases.
+        if np.min(self.unit_cell_orbital_indices[0, 0, 0]) == 0:
+            last_value = 0
+            for i, j, k in np.ndindex(self.transport_repetitions + 1, ny, nz):
+                if last_value > np.min(self.unit_cell_orbital_indices[i, j, k]):
+                    raise ValueError(
+                        "The contact indices are not sorted in ascending order.\n"
+                        "This is currently not supported for real-space contacts in SCBA."
+                    )
+                last_value = np.max(self.unit_cell_orbital_indices[i, j, k])
 
-            elif np.max(indices) == self.device.hamiltonians.shape[-1] - 1:
-                n = self.device.hamiltonians.num_local_blocks - 1
-                m = n - 1
-                self.diagonal_inds = (n, n)
-                self.upper_inds = (n, m)
-                self.order = "reverse"
-                self.owning_rank = comm.block.size - 1
-            else:
-                raise ValueError("The contact indices cannot be matched.")
+            self.order = None
+            self.diagonal_inds = (0, 0)
+            self.upper_inds = (0, 1)
+            self.owning_rank = 0
+
+        elif (
+            np.max(self.unit_cell_orbital_indices[0, 0, 0])
+            == self.device.hamiltonians.shape[-1] - 1
+        ):
+            last_value = self.device.hamiltonians.shape[-1] - 1
+            for i, j, k in np.ndindex(self.transport_repetitions + 1, ny, nz):
+                if last_value < np.max(self.unit_cell_orbital_indices[i, j, k]):
+                    raise ValueError(
+                        "The contact indices are not sorted in descending order.\n"
+                        "This is currently not supported for real-space contacts in SCBA."
+                    )
+                last_value = np.min(self.unit_cell_orbital_indices[i, j, k])
+
+            n = self.device.hamiltonians.num_local_blocks - 1
+            m = n - 1
+            self.diagonal_inds = (n, n)
+            self.upper_inds = (n, m)
+            self.order = "reverse"
+            self.owning_rank = comm.block.size - 1
+
+        else:
+            raise ValueError(
+                "The contact indices cannot be matched\n"
+                "since they do not correspond to either the first"
+                "or last block of the Hamiltonian."
+            )
 
         # TODO validate that contacts do not span multiple ranks
+
+    def _analyze_contact_indices(self):
+        """Map the contact indices to the corresponding blocks."""
+        if self.contact_config._contact_finder_method == "from_unit":
+            self._analyze_from_unit()
+        elif self.contact_config._contact_finder_method == "real_space":
+            self._analyze_real_space()
 
     def _configure_obc(
         self,
