@@ -1455,7 +1455,7 @@ class OutputConfig(BaseModel):
     as it is independet of any interaction cutoffs, since it is computed
     from the temporarily densified Green's functions and self-energies.
 
-    !!! Note
+    !!! note
         Independent of `meir_wingreen_currents`.
 
     """
@@ -1472,7 +1472,7 @@ class OutputConfig(BaseModel):
     as it is independet of any interaction cutoffs, since it is computed
     from the temporarily densified Green's functions and self-energies.
 
-    !!! Note
+    !!! note
         Independent of `device_currents`.
 
     !!! Warning
@@ -2200,7 +2200,7 @@ class PreProcessConfig(BaseModel):
     This will compute the Fermi level of the contacts based on the
     doping and the mid-gap energy.
 
-    !!! Note
+    !!! note
         This will override the `fermi_level` parameter in the contact
         configuration.
 
