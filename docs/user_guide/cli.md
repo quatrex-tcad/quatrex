@@ -37,10 +37,10 @@ before running simulations including electrostatics.
 | `--off-screen` | Whether to use off-screen rendering. A visualization of the mesh will be generated without displaying it on the screen. |
 | `--help`       | Show a help message.                 |
 
-## :octicons-command-palette-24: `quatrex pre=process`
+## :octicons-command-palette-24: `quatrex pre-process`
 
 ```bash
-quatrex pre=process [OPTIONS] CONFIG
+quatrex pre-process [OPTIONS] CONFIG
 ```
 
 Runs different pre-processing steps based on the provided configuration.
