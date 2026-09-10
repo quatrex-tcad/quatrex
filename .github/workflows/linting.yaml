@@ -26,6 +26,12 @@ jobs:
           frozen: true
           activate-environment: ci
 
+      - name: Check repo commit and the quatrex version in pixi
+        run: |
+          echo "Commit hash: $(git rev-parse HEAD)"
+          echo "quatrex version: $(python -c 'import quatrex; print(quatrex.__version__)')"
+
+
       - name: Run Pre-Commit Hooks
         id: pre-commit
         continue-on-error: true
