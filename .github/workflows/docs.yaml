@@ -22,7 +22,7 @@ jobs:
         uses: actions/configure-pages@v5
 
       - name: Checkout Repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
 
       - name: Pull Necessary LFS Files
         run: git lfs pull --exclude="*.h5, *.npy, *.msh"
