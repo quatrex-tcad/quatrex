@@ -873,14 +873,10 @@ class LyapunovConfig(BaseModel):
 class ContactConfig(BaseModel):
     """Configuration for a contact.
 
-    !!! warning
-        Many contact parameters are currently only used in the `"wf"`
-        formalism.
-
     !!! note
-        For wave function simulation, the contact parameters
-        automatically determine how to find the contact oribitals. The
-        user can either build the device from unit cell through
+        The contact parameters automatically determine how to find the
+        contact oribitals. The user can either build the device from
+        unit cell through
         [`construct_from_unit_cell`](device/#construct_from_unit_cell)
         parameter in the device configuration where the contact orbitals
         are determined from the device parameters or in real space
@@ -897,10 +893,10 @@ class ContactConfig(BaseModel):
     """A unique name for the contact.
 
     !!! note
-        In wave function simulations when building the device from unit
-        cell, this name can be either `left` or `right` to automatically
-        determine the contact orbitals from the device unit cell.
-        Otherwise, it can be arbitrary.
+        When building the device from unit cell, this name can be either
+        `left` or `right` to automatically determine the contact
+        orbitals from the device unit cell. Otherwise, it can be
+        arbitrary.
 
     """
 
@@ -923,9 +919,6 @@ class ContactConfig(BaseModel):
       [`lattice_vectors`](#lattice_vectors) parameters to determine
       which orbitals belong to the contact.
 
-    !!! warning
-        This parameter is currently only used in the `"wf"` formalism.
-
     """
 
     transport_direction: Literal["a", "b", "c"] | None = None
@@ -933,9 +926,6 @@ class ContactConfig(BaseModel):
 
     This is used to find periodic images of the contact in transport
     direction.
-
-    !!! warning
-        This parameter is currently only used in the `"wf"` formalism.
 
     !!! note
         When building the device from unit cell, this parameter is
@@ -950,9 +940,6 @@ class ContactConfig(BaseModel):
     This is used to automatically determine the orbitals that belong to
     this contact.
 
-    !!! warning
-        This parameter is currently only used in the `"wf"` formalism.
-
     !!! note
         When building the device from unit cell, this parameter is not
         needed. Otherwise, it must be set explicitly.
@@ -962,15 +949,12 @@ class ContactConfig(BaseModel):
     lattice_vectors: list[list[float]] | None = None
     """The lattice vectors of the contact cell in Å.
 
-    In `"wf"` simulations this is used to automatically determine the
-    orbitals that belong to this contact.
+    This is used to automatically determine the orbitals that belong to
+    this contact.
 
     The volume of the contact cell is also used to determine the Fermi
     level of the contact from its doping density and the density of
     states of its band structure.
-
-    !!! warning
-        This parameter is currently only used in the `"wf"` formalism.
 
     !!! note
         When building the device from unit cell, this parameter is not
@@ -988,9 +972,6 @@ class ContactConfig(BaseModel):
     When set explicitly, this may lead to physically inconsistent
     results, especially in the context of Schrödinger-Poisson
     simulations.
-
-    !!! warning
-        This parameter is currently only used in the `"wf"` formalism.
 
     """
 
@@ -1777,8 +1758,15 @@ class DeviceConfig(BaseModel):
 
         names = []
 
+        origins = []
+        lattice_vectors = []
+
         for contact in self.contacts:
             names.append(contact.name)
+            if contact.origin is not None:
+                origins.append(contact.origin)
+            if contact.lattice_vectors is not None:
+                lattice_vectors.append(contact.lattice_vectors)
             if contact._contact_finder_method is not None:
                 raise ValueError(
                     "The `_contact_finder_method` parameter is not user configurable."
@@ -1824,13 +1812,30 @@ class DeviceConfig(BaseModel):
                         "the `transport_direction` must be provided."
                     )
 
+        # Check that the contacts are uniquely defined
         if len(names) != len(set(names)):
             raise ValueError("The contact names must be unique.")
+        # NOTE: This is no the best check since it still allows for
+        # contacts to overlap in real space, but it is a good first
+        # check. For example, if the contact parameters are copied
+        # around.
+        if len(origins) != len(set(tuple(o) for o in origins)):
+            raise ValueError("The contact origins must be unique.")
+        if len(lattice_vectors) != len(
+            set(tuple(tuple(v) for v in lv) for lv in lattice_vectors)
+        ):
+            raise ValueError("The contact lattice vectors must be unique.")
 
-        # TODO Check that when building from unit cell, both left and
-        # right contacts are present. Currently, the check is avoided to
-        # not conflict with SCBA. Otherwise, we would need to know the
-        # formalism here.
+        if len(names) < 2:
+            raise ValueError(
+                "At least two contacts must be defined in the device configuration."
+            )
+        if self.construct_from_unit_cell:
+            if len(names) != 2 or "left" not in names or "right" not in names:
+                raise ValueError(
+                    "When the device is constructed from a unit cell,\n"
+                    "both `left` and `right` contacts must be defined."
+                )
 
         return self
 
