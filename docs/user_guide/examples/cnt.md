@@ -86,7 +86,7 @@ get a contact definition as follows:
 name = "left"
 origin = [0.1551, 0.0, 0.0]
 lattice_vectors = [[4.27615261, 0, 0], [0, 50, 0], [0, 0, 50]]
-direction = "a"
+transport_direction = "a"
 fermi_level = -3.6
 ```
 
@@ -98,7 +98,7 @@ set
 name = "right"
 origin = [102.694, 0.0, 0.0]
 lattice_vectors = [[-4.27615261, 0, 0], [0, 50, 0], [0, 0, 50]]
-direction = "a"
+transport_direction = "a"
 fermi_level = -3.601
 ```
 
@@ -134,14 +134,14 @@ since this is a very small system, we choose the `#!toml obc.nevp_solver
         name = "left"
         origin = [0.1551, 0.0, 0.0]
         lattice_vectors = [[4.27615261, 0, 0], [0, 50, 0], [0, 0, 50]]
-        direction = "a"
+        transport_direction = "a"
         fermi_level = -3.6
 
         [[device.contacts]]
         name = "right"
         origin = [102.694, 0.0, 0.0]
         lattice_vectors = [[-4.27615261, 0, 0], [0, 50, 0], [0, 0, 50]]
-        direction = "a"
+        transport_direction = "a"
         fermi_level = -3.601
 
     [electron]
@@ -192,7 +192,7 @@ phonon = true
     but the contact definition is not yet as flexible as in `"wf"`. In
     particular, it is checked that the contacts for `"negf"` are
     contiguous and that the number of orbitals match the block size.
-    Furtheremore, only two contacts are supported for `"negf"` at the
+    Furthermore, only two contacts are supported for `"negf"` at the
     moment.
 
 As stated above, the full structure, encompassing 768 Wannier orbitals,
@@ -238,14 +238,14 @@ deformation_potential = 15e-3 # eV
         name = "left"
         origin = [0.1551, 0.0, 0.0]
         lattice_vectors = [[4.27615261, 0, 0], [0, 50, 0], [0, 0, 50]]
-        direction = "a"
+        transport_direction = "a"
         fermi_level = -3.6
 
         [[device.contacts]]
         name = "right"
         origin = [102.694, 0.0, 0.0]
         lattice_vectors = [[-4.27615261, 0, 0], [0, 50, 0], [0, 0, 50]]
-        direction = "a"
+        transport_direction = "a"
         fermi_level = -3.601
 
     [electron]

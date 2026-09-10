@@ -40,7 +40,7 @@ def pre_process_fermi_level(
     if config_file is None:
         raise ValueError(
             "The configuration file path is not set. "
-            "An error occured while loading the configuration file."
+            "An error occurred while loading the configuration file."
         )
 
     new_config = tomlkit.parse(config_file.read_text())

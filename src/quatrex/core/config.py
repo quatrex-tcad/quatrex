@@ -875,8 +875,8 @@ class ContactConfig(BaseModel):
 
     !!! note
         The contact parameters automatically determine how to find the
-        contact oribitals. The user can either build the device from
-        unit cell through
+        contact orbitals. The user can either build the device from unit
+        cell through
         [`construct_from_unit_cell`](device/#construct_from_unit_cell)
         parameter in the device configuration where the contact orbitals
         are determined from the device parameters or in real space

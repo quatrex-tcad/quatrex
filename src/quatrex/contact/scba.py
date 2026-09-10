@@ -4,13 +4,14 @@
 
 import numpy as np
 
-from qttools import NDArray, xp
+from qttools import NDArray, sparse, xp
 from qttools.boundary_conditions import lyapunov, obc
 from qttools.comm import comm
 from qttools.nevp import NEVP, Beyn, Full
 from quatrex.bandstructure.contact import contact_band_structure
 from quatrex.contact.base import BaseContact
 from quatrex.core.config import (
+    ContactConfig,
     LyapunovComputeConfig,
     LyapunovConfig,
     NEVPConfig,
@@ -117,7 +118,7 @@ def get_inverse_order(
 
 
 class SCBAContact(BaseContact):
-    """Class representing a contact for QTBM calculations.
+    """Class representing a contact for SCBA calculations.
 
     Parameters
     ----------
@@ -192,8 +193,13 @@ class SCBAContact(BaseContact):
 
     """
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(
+        self,
+        device,
+        contact_config: ContactConfig,
+        sparsity_pattern: sparse.spmatrix,
+    ):
+        super().__init__(device, contact_config, sparsity_pattern)
 
         # Determine to which blocks the indices correspond to.
         self._analyze_contact_indices()

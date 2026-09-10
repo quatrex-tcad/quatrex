@@ -16,7 +16,7 @@ from qttools.profiling import Profiler
 from qttools.toeplitz.circulant import construct_circulant_cell
 from quatrex.bandstructure.contact import contact_band_structure
 from quatrex.contact.base import BaseContact
-from quatrex.core.config import NEVPConfig, OBCConfig
+from quatrex.core.config import ContactConfig, NEVPConfig, OBCConfig
 
 profiler = Profiler()
 
@@ -151,8 +151,13 @@ class QTBMContact(BaseContact):
 
     """
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(
+        self,
+        device,
+        contact_config: ContactConfig,
+        sparsity_pattern: sparse.spmatrix,
+    ):
+        super().__init__(device, contact_config, sparsity_pattern)
 
         # TODO: The obc and nevp config should be directly associated with the contact
         # with either a config per contact or a config per contact.

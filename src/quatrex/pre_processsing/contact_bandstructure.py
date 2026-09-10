@@ -38,7 +38,7 @@ def _plot(
 
 
 def _generate_plots(config: QuatrexConfig, axes: plt.Axes, device: BaseDevice) -> None:
-    """Plots the contact band structure for a wavefunction simulation.
+    """Plots the contact band structure.
 
     Parameters
     ----------
