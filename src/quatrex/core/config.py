@@ -1781,48 +1781,48 @@ class DeviceConfig(BaseModel):
                         "the contact `name` must be either `left` or `right`."
                     )
 
-                if contact.transport_direction is None:
-                    contact.transport_direction = self.transport_direction
-                else:
-                    raise ValueError(
-                        "When the device is constructed from a unit cell,\n"
-                        "the contact `transport_direction` must not be specified."
-                    )
-
-                if (contact.origin is not None) or (
-                    contact.lattice_vectors is not None
+                if (
+                    contact.origin is not None
+                    or contact.lattice_vectors is not None
+                    or contact.transport_direction is not None
                 ):
                     raise ValueError(
-                        "When the device is constructed from a unit cell,\n"
-                        "the contact `origin` and `lattice_vectors` must not be specified."
+                        "When the device is constructed from a unit cell, "
+                        "the contact's `origin`, `lattice_vectors`, and "
+                        "`transport_direction` must not be specified."
                     )
+
+                # Set the transport direction of the contact to be the
+                # same as the device, for processing in the contact
+                # finder.
+                contact.transport_direction = self.transport_direction
 
             else:
                 contact._contact_finder_method = "real_space"
 
-                if contact.origin is None or contact.lattice_vectors is None:
+                if (
+                    contact.origin is None
+                    or contact.lattice_vectors is None
+                    or contact.transport_direction is None
+                ):
                     raise ValueError(
-                        "When the contacts are constructed from real space,\n"
-                        "both `origin` and `lattice_vectors` must be provided."
-                    )
-
-                if contact.transport_direction is None:
-                    raise ValueError(
-                        "When the contacts are constructed from real space,\n"
-                        "the `transport_direction` must be provided."
+                        "When the contacts are constructed from real space, "
+                        " the contact's `origin`, `lattice_vectors`, and "
+                        "`transport_direction` must be provided."
                     )
 
         # Check that the contacts are uniquely defined
         if len(names) != len(set(names)):
             raise ValueError("The contact names must be unique.")
+
         # NOTE: This is no the best check since it still allows for
         # contacts to overlap in real space, but it is a good first
         # check. For example, if the contact parameters are copied
         # around.
-        if len(origins) != len(set(tuple(o) for o in origins)):
+        if len(origins) != len({tuple(o) for o in origins}):
             raise ValueError("The contact origins must be unique.")
         if len(lattice_vectors) != len(
-            set(tuple(tuple(v) for v in lv) for lv in lattice_vectors)
+            {tuple(tuple(v) for v in lv) for lv in lattice_vectors}
         ):
             raise ValueError("The contact lattice vectors must be unique.")
 
@@ -1830,12 +1830,13 @@ class DeviceConfig(BaseModel):
             raise ValueError(
                 "At least two contacts must be defined in the device configuration."
             )
-        if self.construct_from_unit_cell:
-            if len(names) != 2 or "left" not in names or "right" not in names:
-                raise ValueError(
-                    "When the device is constructed from a unit cell,\n"
-                    "both `left` and `right` contacts must be defined."
-                )
+        if self.construct_from_unit_cell and (
+            len(names) != 2 or "left" not in names or "right" not in names
+        ):
+            raise ValueError(
+                "When the device is constructed from a unit cell,\n"
+                "both `left` and `right` contacts must be defined."
+            )
 
         return self
 
@@ -2392,27 +2393,20 @@ class QuatrexConfig(BaseModel):
                 raise ValueError(
                     "Either `fermi_level` or `mid_gap_energy` must be set."
                 )
-            if contact.mid_gap_energy is None and self.formalism == "wf":
-                raise ValueError(
-                    "In the 'wf' formalism, `mid_gap_energy` must be set for each contact."
-                )
 
         return self
 
     @model_validator(mode="after")
-    def check_contact_direction(self) -> Self:
-        """Checks that the contact direction is set in "wf" formalism."""
-
-        if self.formalism == "negf":
-            # NOTE: The contact direction is not used in the NEGF
-            # formalism.
+    def check_wf_reference_midgap(self) -> Self:
+        if self.formalism != "wf":
             return self
 
         for contact in self.device.contacts:
-            if contact.transport_direction is None:
+            if contact.voltage == 0 and contact.mid_gap_energy is None:
                 raise ValueError(
-                    "The `direction` parameter of each contact must be "
-                    "set in the 'wf' formalism."
+                    "In the 'wf' formalism, `mid_gap_energy` must be set for the "
+                    "reference contact (i.e. the contact with `voltage=0`) to "
+                    "compute excess charge carrier densities."
                 )
 
         return self

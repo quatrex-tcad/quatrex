@@ -263,29 +263,32 @@ class BaseDevice:
 
         """
 
-        # The Fermi level is always required while midgap energy and
-        # `conduction_band_edge` are only required if SCSP is
-        # used.
-        # Also needed when band edge tracking is enabled.
+        # NOTE: The Fermi level (chemical potential) is always needed to
+        # compute currents. If this is not set in the contact
+        # configuration, it can be computed from the contact's
+        # electronic structure and a mid-gap energy guess for the
+        # respective contact. The mid-gap energy is also needed for a
+        # reference contact when computing excess charge densities. The
+        # conduction band edge is needed in a reference contact when
+        # doing self-consistent Schrödinger-Poisson, to set the boundary
+        # conditions for the Poisson equation.
         for contact_config, contact in zip(self.device_config.contacts, self.contacts):
             if (
-                (contact_config.fermi_level is None)
+                self.config.electron.band_edge_tracking
+                or contact_config.fermi_level is None
                 or (
-                    contact_config.conduction_band_edge is None
-                    and self.config.scsp is not None
+                    self.config.scsp is not None
+                    and (
+                        contact_config.mid_gap_energy is None
+                        or contact_config.conduction_band_edge is None
+                    )
                 )
-                or (
-                    contact_config.mid_gap_energy is None
-                    and self.config.scsp is not None
-                )
-                or self.config.electron.band_edge_tracking
             ):
                 if comm.rank == 0:
                     print(
                         f"Computing Fermi level for contact {contact_config.name}",
                         flush=True,
                     )
-                if comm.rank == 0:
                     warnings.warn(
                         "Recomputing the Fermi level and other contact parameters.\n"
                         "Please call `quatrex pre-process` beforehand to avoid this\n"
