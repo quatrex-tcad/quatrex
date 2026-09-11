@@ -12,8 +12,8 @@ from qttools.datastructures import DSDBSparse
 from qttools.datastructures.dsdbsparse import _block_view
 from qttools.kernels.linalg import eigvalsh
 from qttools.utils.mpi_utils import get_section_sizes
+from quatrex.contact.scba import order_block, order_vector
 from quatrex.core.config import BandEdgeConfig
-from quatrex.device.contact import order_block, order_vector
 
 if xp.__name__ == "numpy":
     from scipy.signal import find_peaks
@@ -369,6 +369,7 @@ def find_renormalized_eigenvalues(
     diagonal_inds: tuple[int, int],
     upper_inds: tuple[int, int],
     order: str | None = None,
+    block_sections: int = 1,
     band_edge_config: BandEdgeConfig = BandEdgeConfig(),
 ) -> NDArray:
     """Computes renormalized eigenvalues for a specific contact.
@@ -410,6 +411,8 @@ def find_renormalized_eigenvalues(
         assumed. Instead of an explicit permutation, the string
         "reverse" can be passed to reverse the order of the blocks,
         which is equivalent to the right contact order.
+    block_sections : int, optional
+        The number of block sections to assume in the computation.
     band_edge_config : BandEdgeConfig, optional
         The configuration for the band edge computation, by default
         BandEdgeConfig().
@@ -479,7 +482,7 @@ def find_renormalized_eigenvalues(
                 diagonal_inds=diagonal_inds,
                 upper_inds=upper_inds,
                 order=order,
-                block_sections=band_edge_config.block_sections,
+                block_sections=block_sections,
                 use_eigvalsh=band_edge_config.use_eigvalsh,
                 eigvalsh_compute_location=band_edge_config.eigvalsh_compute_location,
                 use_pinned_memory=band_edge_config.use_pinned_memory,

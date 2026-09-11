@@ -4,7 +4,7 @@
 
 from qttools.comm import comm
 from quatrex.core.config import QuatrexConfig
-from quatrex.device import Device
+from quatrex.device import create_device
 from quatrex.pre_processsing.contact_bandstructure import plot_contact_band_structure
 from quatrex.pre_processsing.contact_fermi_level import pre_process_fermi_level
 
@@ -24,13 +24,13 @@ def pre_process(config: QuatrexConfig):
     """
 
     if comm.size > 1:
-        raise RuntimeError(
-            "The 'pre-process' command can only be run on a single process."
+        raise ValueError(
+            "Pre-processing can be only performed on a single process. "
+            "If you are running a parallel simulation, please ensure that "
+            "the pre-processing steps are completed before starting the parallel run."
         )
 
-    device = None
-    if config.formalism == "wf":
-        device = Device(config)
+    device = create_device(config)
 
     if config.pre_process.compute_fermi_level:
         pre_process_fermi_level(config, device)

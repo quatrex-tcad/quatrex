@@ -11,7 +11,7 @@ phi-circulant but still toeplitz in transport direction.
 - The expansion for the full matrix (real or k-space) of the system,
 which shares the same structure as the previsous cases.
 
-Furtheremore, we can differentiate between how the inputs are provided
+Furthermore, we can differentiate between how the inputs are provided
 and the shape of the output. We currently have a mixed functionality
 where the inputs can be full blocks which are sliced or `dict` of the
 already slicesd unit cells.

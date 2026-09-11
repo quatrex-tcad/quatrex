@@ -50,10 +50,7 @@ $$
 $$
 
 while the eigenvalues can be obtained from $\lambda =
-\hat{\lambda}^{b}$. Currently, the periodicity has to be manually set
-through the parameter
-[`block_sections`](../parameters/obc.md#block_sections) for NEGF
-simulation while for QTBM it is automatically determined.
+\hat{\lambda}^{b}$.
 
 Potentially, periodicity in non-transport directions can also be
 exploited to further reduce the problem size. This would lead to

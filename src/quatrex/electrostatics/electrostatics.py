@@ -10,8 +10,7 @@ from qttools.comm import comm
 from qttools.utils.gpu_utils import get_device, get_host
 from qttools.utils.mpi_utils import distributed_load
 from quatrex.core.config import QuatrexConfig
-from quatrex.core.qtbm import QTBM
-from quatrex.core.scba import SCBA
+from quatrex.device import BaseDevice
 from quatrex.electrostatics.geometry_config import VolumeProperties
 from quatrex.electrostatics.meshing import DeviceMesh
 from quatrex.electrostatics.solver import (
@@ -38,15 +37,14 @@ class ElectrostaticSolver:
     ----------
     config : QuatrexConfig
         The configuration object.
-    transport_solver : QTBM | SCBA
-        The transport solver, which may be needed to determine the
-        contact potential constraints.
+    device : BaseDevice
+        The device object representing the physical system to be solved.
 
     """
 
     call_count = 0
 
-    def __init__(self, config: QuatrexConfig, transport_solver: QTBM | SCBA):
+    def __init__(self, config: QuatrexConfig, device: BaseDevice):
         """Initializes the electrostatic solver."""
 
         self.config = config
@@ -60,7 +58,7 @@ class ElectrostaticSolver:
         potential_constraints, fixed_density = self._configure_constraints(
             config=config,
             device_mesh=self.device_mesh,
-            transport_solver=transport_solver,
+            device=device,
         )
 
         self.initial_guess_strategy = config.electrostatics.initial_guess
@@ -71,9 +69,7 @@ class ElectrostaticSolver:
             # well, not only in the gates.
             self.contact_potential_constraints = (
                 self._configure_contact_potential_constraints(
-                    config=config,
-                    atom_inds=self.atom_inds,
-                    transport_solver=transport_solver,
+                    config=config, atom_inds=self.atom_inds, device=device
                 )
             )
 
@@ -92,30 +88,19 @@ class ElectrostaticSolver:
     def _configure_constraints(
         config: QuatrexConfig,
         device_mesh: DeviceMesh,
-        transport_solver: QTBM | SCBA,
+        device: BaseDevice,
     ) -> tuple[dict[str, tuple[float, NDArray]], NDArray]:
         """Configures the constraints for the electrostatic problem."""
 
         # Determine the reference contact. Needed to determine the
         # reference conduction band edge - Fermi level difference for
         # the potential constraints.
-        if isinstance(transport_solver, QTBM):
-            for contact in transport_solver.device.contacts:
-                if contact.voltage == 0.0:
-                    delta_fermi_level_conduction_band = (
-                        contact.conduction_band_edge - contact.fermi_level
-                    )
-                    break
-
-        elif isinstance(transport_solver, SCBA):
-            if config.electron.left_contact.voltage == 0.0:
+        for contact in device.contacts:
+            if contact.voltage == 0.0:
                 delta_fermi_level_conduction_band = (
-                    transport_solver.electron_solver.left_delta_fermi_level_conduction_band
+                    contact.conduction_band_edge - contact.fermi_level
                 )
-            if config.electron.right_contact.voltage == 0.0:
-                delta_fermi_level_conduction_band = (
-                    transport_solver.electron_solver.right_delta_fermi_level_conduction_band
-                )
+                break
 
         potential_constraints = {}
         for region in config.device.geometry.regions:
@@ -217,7 +202,7 @@ class ElectrostaticSolver:
     def _configure_contact_potential_constraints(
         config: QuatrexConfig,
         atom_inds: NDArray,
-        transport_solver: QTBM | SCBA,
+        device: BaseDevice,
     ) -> dict[str, tuple[float, NDArray]]:
         """Gets the potential constraints for the contacts based on the
         transport solver.
@@ -233,52 +218,27 @@ class ElectrostaticSolver:
             The indices of the mesh nodes corresponding to the atomic
             positions, which is needed to determine where to apply the
             contact potential constraints.
-        transport_solver : QTBM | SCBA
-            The transport solver, which may be needed to determine the
-            contact potential constraints.
+        device : BaseDevice
+            The device object representing the physical system to be
+            solved.
 
         Returns
         -------
         contact_potential_constraints : dict[str, tuple[float, NDArray]]
             A dictionary mapping contact names to tuples of (potential
-            value, indices of the nodes where the constraint is applied).
+            value, indices of the nodes where the constraint is
+            applied).
 
         """
 
-        if isinstance(transport_solver, QTBM):
-            # In the wavefunction formalism we go through all contacts
-            # and gather their potentials.
-            contact_potential_constraints = {}
-            for contact in transport_solver.device.contacts:
-                contact_inds = atom_inds[contact.origin_atom_indices]
-                contact_potential_constraints[contact.name] = (
-                    -contact.voltage,
-                    contact_inds,
-                )
+        contact_potential_constraints = {}
+        for contact in device.contacts:
+            contact_inds = atom_inds[contact.origin_atom_indices]
+            contact_potential_constraints[contact.name] = (
+                -contact.voltage,
+                contact_inds,
+            )
 
-            return contact_potential_constraints
-
-        # In NEGF the contacts are the first and last blocks of
-        # orbitals.
-        if isinstance(config.device.block_size, int):
-            left_block_size = right_block_size = config.device.block_size
-        else:
-            left_block_size = config.device.block_size[0]
-            right_block_size = config.device.block_size[-1]
-
-        left_contact_inds = atom_inds[:left_block_size]
-        right_contact_inds = atom_inds[-right_block_size:]
-
-        contact_potential_constraints = {
-            config.electron.left_contact.name: (
-                -config.electron.left_contact.voltage,
-                left_contact_inds,
-            ),
-            config.electron.right_contact.name: (
-                -config.electron.right_contact.voltage,
-                right_contact_inds,
-            ),
-        }
         return contact_potential_constraints
 
     def generate_initial_guess(self) -> NDArray:

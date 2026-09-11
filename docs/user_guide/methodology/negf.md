@@ -216,11 +216,7 @@ right hand side in the Keldysh equation.
 !!! info "Spillover corrections with unit cell periodicity"
     If the device is periodic in smaller cells, the spillover
     corrections is computed only with the outermost unit cell and its
-    hopping matrices. Currently, this is configured through the
-    [`block_sections`](../parameters/obc.md#block_sections) parameter in
-    the Coulomb Screening solver. This will be refactored and in the
-    future, the periodicity will end up either being automatically
-    detected or set through a new parameter.
+    hopping matrices.
 
 #### Open Boundary Conditions
 
@@ -236,11 +232,6 @@ right-hand side of the Keldysh equation, which is explained in the
     As for the spillover corrections, if the device is periodic in
     smaller cells, the open boundary conditions are computed from the
     outermost unit cell and its corresponding hopping matrices.
-    Currently, this is configured through the
-    [`block_sections`](../parameters/obc.md#block_sections) parameter in
-    the Coulomb Screening solver. This will be refactored and in the
-    future, the periodicity will end up either being automatically
-    detected or set through a new parameter.
 
 ### Phonons
 

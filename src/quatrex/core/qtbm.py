@@ -25,13 +25,13 @@ from qttools.wave_function_solver import (
     cuDSS,
     preferred_sparse_format,
 )
+from quatrex.contact.qtbm import OBCResult, QTBMContact
 from quatrex.core.config import QuatrexConfig, SolverConfig
 from quatrex.core.constants import e, h
 from quatrex.core.statistics import fermi_dirac
 from quatrex.core.transport import TransportSolver
-from quatrex.device import Contact, Device
-from quatrex.device.contact import OBCResult
-from quatrex.grid import get_electron_energies, monkhorst_pack
+from quatrex.device import QTBMDevice
+from quatrex.grid import get_electron_energies
 
 profiler = Profiler()
 
@@ -46,7 +46,7 @@ class Observables:
         Orbital-resolved local density of states (LDOS) for each
         contact.
     contact_currents : dict, optional
-        Contact current values for each contact pair.
+        QTBMContact current values for each contact pair.
     transmissions : dict, optional
         Transmission coefficients between contact pairs.
     excess_electron_density : NDArray, optional
@@ -56,10 +56,12 @@ class Observables:
 
     """
 
-    electron_ldos: dict[Contact, NDArray] = field(default_factory=dict)
-    transmissions: dict[tuple[Contact, Contact], NDArray] = field(default_factory=dict)
+    electron_ldos: dict[QTBMContact, NDArray] = field(default_factory=dict)
+    transmissions: dict[tuple[QTBMContact, QTBMContact], NDArray] = field(
+        default_factory=dict
+    )
 
-    contact_currents: dict[tuple[Contact, Contact], NDArray] | None = None
+    contact_currents: dict[tuple[QTBMContact, QTBMContact], NDArray] | None = None
     excess_electron_density: NDArray | None = None
     excess_hole_density: NDArray | None = None
 
@@ -69,19 +71,18 @@ class QTBM(TransportSolver):
 
     Parameters
     ----------
-    device : Device
-        The quantum device object containing Hamiltonian, atomic
-        structure, and attached contacts.
     config : QuatrexConfig
         Configuration object containing calculation parameters, energy
         grid, and numerical settings.
+    device : QTBMDevice
+        The quantum device object containing Hamiltonian, atomic
+        structure, and attached contacts.
+
 
     Attributes
     ----------
-    device : Device
+    device : QTBMDevice
         Reference to the device object.
-    kpoints : tuple
-        k-points for the calculation.
     observables : Observables
         Container for computed transport observables including
         transmission matrices, density of states, and current
@@ -93,7 +94,7 @@ class QTBM(TransportSolver):
 
     """
 
-    def __init__(self, device: Device, config: QuatrexConfig) -> None:
+    def __init__(self, config: QuatrexConfig, device: QTBMDevice) -> None:
         """Initializes the QTBM solver."""
 
         self.device = device
@@ -107,10 +108,6 @@ class QTBM(TransportSolver):
                 "The device only has a Gamma point Hamiltonian, "
                 "but more than one k-point is configured."
             )
-
-        # Generate the Monkhorst-Pack k-point grid.
-        self.kpoints = monkhorst_pack(kpoint_grid, config.device.kpoint_shift)
-        self.num_kpoints = self.kpoints.shape[0]
 
         self.max_batch_size = self.config.qtbm.max_batch_size
 
@@ -130,13 +127,17 @@ class QTBM(TransportSolver):
 
                 # Initialize the observables
                 self.observables.transmissions[contact_in, contact_out] = xp.zeros(
-                    (self.num_kpoints, self.local_energies.shape[0]),
+                    (self.device.num_kpoints, self.local_energies.shape[0]),
                     dtype=xp.float64,
                 )
 
         for contact in self.device.contacts:
             self.observables.electron_ldos[contact] = xp.zeros(
-                (self.num_kpoints, self.num_orbitals, self.local_energies.shape[0]),
+                (
+                    self.device.num_kpoints,
+                    self.num_orbitals,
+                    self.local_energies.shape[0],
+                ),
                 dtype=xp.float64,
             )
 
@@ -371,14 +372,14 @@ class QTBM(TransportSolver):
             )
 
     def _get_obc_result_info(
-        self, obc_results: dict[Contact, OBCResult], energy_ind: int
+        self, obc_results: dict[QTBMContact, OBCResult], energy_ind: int
     ):
         """Extracts the number of injected and reflected modes for each
         contact at a given energy index.
 
         Parameters
         ----------
-        obc_results : dict[Contact, OBCResult]
+        obc_results : dict[QTBMContact, OBCResult]
             Dictionary mapping each contact to its corresponding OBC
             result containing injection and reflection data.
         energy_ind : int
@@ -405,13 +406,13 @@ class QTBM(TransportSolver):
 
     @profiler.profile("QTBM: Assemble RHS", level="default")
     def _assemble_rhs(
-        self, obc_results: dict[Contact, OBCResult], energy_ind: int
+        self, obc_results: dict[QTBMContact, OBCResult], energy_ind: int
     ) -> NDArray:
         """Assembles the right-hand side vector for the linear system.
 
         Parameters
         ----------
-        obc_results : dict[Contact, OBCResult]
+        obc_results : dict[QTBMContact, OBCResult]
             Dictionary of OBC results for each contact, containing
             injection and reflection data.
         energy_ind : int
@@ -522,7 +523,7 @@ class QTBM(TransportSolver):
                 )
 
     def _add_sigma_obc_to_system_matrix(
-        self, factor: float, obc_results: dict[Contact, OBCResult], energy_ind: int
+        self, factor: float, obc_results: dict[QTBMContact, OBCResult], energy_ind: int
     ) -> None:
         """Adds the contribution of a contact self-energy to the system
         matrix for a given contact.
@@ -531,7 +532,7 @@ class QTBM(TransportSolver):
         ----------
         factor : float
             A scaling factor for the self-energy contribution.
-        obc_results : dict[Contact, OBCResult]
+        obc_results : dict[QTBMContact, OBCResult]
             Dictionary of OBC results for each contact.
         energy_ind : int
             Index of the current energy being processed.
@@ -563,7 +564,7 @@ class QTBM(TransportSolver):
             The k-point for which the system matrix is being constructed.
         energy : np.float64
             The energy value for which to construct the system matrix.
-        obc_results : dict[Contact, OBCResult]
+        obc_results : dict[QTBMContact, OBCResult]
             Dictionary of OBC results for each contact.
         energy_ind : int
             Index of the current energy being processed.
@@ -626,7 +627,7 @@ class QTBM(TransportSolver):
 
     def _assemble_pseudo_inverse(
         self,
-        obc_results: dict[Contact, OBCResult],
+        obc_results: dict[QTBMContact, OBCResult],
         offsets_reflected: NDArray,
         energy_ind: int,
         shape: tuple,
@@ -635,7 +636,7 @@ class QTBM(TransportSolver):
 
         Parameters
         ----------
-        obc_results : dict[Contact, OBCResult]
+        obc_results : dict[QTBMContact, OBCResult]
             Dictionary of OBC results for each contact.
         offsets_reflected : NDArray
             Array of offsets for the reflected modes.
@@ -688,7 +689,7 @@ class QTBM(TransportSolver):
     def _recover_full_rank_wavefunction(
         self,
         phi: NDArray,
-        obc_results: dict[Contact, OBCResult],
+        obc_results: dict[QTBMContact, OBCResult],
         energy_ind: int,
     ) -> NDArray:
         """Recovers the full-rank wavefunction from the low-rank solution.
@@ -698,7 +699,7 @@ class QTBM(TransportSolver):
         phi : NDArray
             The low-rank wavefunction solution obtained from solving the
             linear system with the reduced method.
-        obc_results : dict[Contact, OBCResult]
+        obc_results : dict[QTBMContact, OBCResult]
             Dictionary of OBC results for each contact, containing
             injection and reflection data.
         energy_ind : int
@@ -755,7 +756,7 @@ class QTBM(TransportSolver):
         phi: NDArray,
         injection_slices: dict,
         global_energy_ind: int,
-        obc_results: dict[Contact, OBCResult],
+        obc_results: dict[QTBMContact, OBCResult],
         kpoint_ind: int,
     ):
         """Computes transmission coefficients.
@@ -770,7 +771,7 @@ class QTBM(TransportSolver):
             corresponds to the contact's injection modes.
         global_energy_ind : int
             Energy index in the global energy array for storing results.
-        obc_results : dict[Contact, OBCResult]
+        obc_results : dict[QTBMContact, OBCResult]
             Dictionary of OBC results for each contact, containing
             injection and reflection data.
         kpoint_ind : int
@@ -825,7 +826,7 @@ class QTBM(TransportSolver):
         phi: NDArray,
         injection_slices: dict,
         global_energy_ind: int,
-        obc_results: dict[Contact, OBCResult],
+        obc_results: dict[QTBMContact, OBCResult],
         kpoint: float,
         kpoint_ind: int,
     ):
@@ -841,7 +842,7 @@ class QTBM(TransportSolver):
             corresponds to the contact's injection modes.
         global_energy_ind : int
             Energy index in the global energy array for storing results.
-        obc_results : dict[Contact, OBCResult]
+        obc_results : dict[QTBMContact, OBCResult]
             Dictionary of OBC results for each contact, containing
             injection and reflection data.
         kpoint : float
@@ -1039,7 +1040,7 @@ class QTBM(TransportSolver):
         phi: NDArray,
         local_energy_ind: int,
         global_energy_ind: int,
-        obc_results: dict[Contact, OBCResult],
+        obc_results: dict[QTBMContact, OBCResult],
         kpoint: float,
         kpoint_ind: int,
     ):
@@ -1059,7 +1060,7 @@ class QTBM(TransportSolver):
             Energy index in the local energy array.
         global_energy_ind : int
             Energy index in the global energy array for storing results.
-        obc_results : dict[Contact, OBCResult]
+        obc_results : dict[QTBMContact, OBCResult]
             Dictionary mapping each contact to its corresponding OBC
             result containing injection and reflection data.
         kpoint : float
@@ -1129,7 +1130,7 @@ class QTBM(TransportSolver):
                         axis=1,
                     )
                 )
-                / self.num_kpoints
+                / self.device.num_kpoints
                 * (2 * e / h)
             )
 
@@ -1305,10 +1306,10 @@ class QTBM(TransportSolver):
 
         comm.barrier()
 
-        for kpoint_ind, kpoint in enumerate(self.kpoints):
+        for kpoint_ind, kpoint in enumerate(self.device.kpoints):
             if comm.rank == 0:
                 print(
-                    f"Processing k-point {kpoint_ind+1} of {self.num_kpoints}",
+                    f"Processing k-point {kpoint_ind+1} of {self.device.num_kpoints}",
                     flush=True,
                 )
 

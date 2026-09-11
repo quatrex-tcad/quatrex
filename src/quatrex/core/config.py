@@ -583,8 +583,8 @@ class OBCConfig(BaseModel):
     = 0,
     $$
 
-    where $b$ is the number of [`block_sections`](#block_sections), and
-    $\hat{\mathbf{m}}_{n}$ are potentially reduced coupling matrices.
+    where $b$ is the number of sections, and $\hat{\mathbf{m}}_{n}$ are
+    potentially reduced coupling matrices.
 
     From selected eigenvalues $\lambda = e^{i k}$ and eigenvectors
     $\mathbf{v}$, the surface Green's functions can be constructed.
@@ -606,29 +606,6 @@ class OBCConfig(BaseModel):
     [^beyn]: W.-J. Beyn, An integral method for solving nonlinear
         eigenvalue problems, Linear Algebra and its Applications, 2012,
         https://doi.org/10.1016/j.laa.2011.03.030.
-
-    """
-
-    block_sections: PositiveInt = 1
-    """The number of unit cell blocks along transport direction.
-
-    !!! note
-        This is automatically determined in QTBM calculations. Thus it
-        only has an effect in NEGF calculations.
-
-    In NEGF calculations, one needs to define block-sizes that lead to a
-    block-tridiagonal tiling of the system matrix. These *transport
-    blocks* are sometimes constructed from multiple unit cells.
-
-    With the [`block_sections`](#block_sections) parameter, one can
-    specify how many unit cells are merged into a single transport
-    block. This is then used when [`nevp_solver`](#nevp_solver) is set
-    to `"beyn"` to reduce the size of the contact NEVP.
-
-    For example, if the transport cell is constructed from two unit
-    cells along the transport direction, setting `block_sections = 2`
-    will halve the size of the NEVP. The contact transport blocks need
-    to be sorted accordingly.
 
     """
 
@@ -811,14 +788,6 @@ class OBCConfig(BaseModel):
 
         return self
 
-    @model_validator(mode="after")
-    def scale_contour_radii(self) -> Self:
-        """Scales the contour radii based on block_sections."""
-        self.r_o **= 1 / self.block_sections
-        self.r_i **= 1 / self.block_sections
-
-        return self
-
 
 class LyapunovConfig(BaseModel):
     r"""Parameters for solving the (discrete-time) Lyapunov equation.
@@ -904,14 +873,10 @@ class LyapunovConfig(BaseModel):
 class ContactConfig(BaseModel):
     """Configuration for a contact.
 
-    !!! warning
-        Many contact parameters are currently only used in the `"wf"`
-        formalism.
-
     !!! note
-        For wave function simulation, the contact parameters
-        automatically determine how to find the contact oribitals. The
-        user can either build the device from unit cell through
+        The contact parameters automatically determine how to find the
+        contact orbitals. The user can either build the device from unit
+        cell through
         [`construct_from_unit_cell`](device/#construct_from_unit_cell)
         parameter in the device configuration where the contact orbitals
         are determined from the device parameters or in real space
@@ -928,10 +893,10 @@ class ContactConfig(BaseModel):
     """A unique name for the contact.
 
     !!! note
-        In wave function simulations when building the device from unit
-        cell, this name can be either `left` or `right` to automatically
-        determine the contact orbitals from the device unit cell.
-        Otherwise, it can be arbitrary.
+        When building the device from unit cell, this name can be either
+        `left` or `right` to automatically determine the contact
+        orbitals from the device unit cell. Otherwise, it can be
+        arbitrary.
 
     """
 
@@ -954,9 +919,6 @@ class ContactConfig(BaseModel):
       [`lattice_vectors`](#lattice_vectors) parameters to determine
       which orbitals belong to the contact.
 
-    !!! warning
-        This parameter is currently only used in the `"wf"` formalism.
-
     """
 
     transport_direction: Literal["a", "b", "c"] | None = None
@@ -964,9 +926,6 @@ class ContactConfig(BaseModel):
 
     This is used to find periodic images of the contact in transport
     direction.
-
-    !!! warning
-        This parameter is currently only used in the `"wf"` formalism.
 
     !!! note
         When building the device from unit cell, this parameter is
@@ -981,9 +940,6 @@ class ContactConfig(BaseModel):
     This is used to automatically determine the orbitals that belong to
     this contact.
 
-    !!! warning
-        This parameter is currently only used in the `"wf"` formalism.
-
     !!! note
         When building the device from unit cell, this parameter is not
         needed. Otherwise, it must be set explicitly.
@@ -993,15 +949,12 @@ class ContactConfig(BaseModel):
     lattice_vectors: list[list[float]] | None = None
     """The lattice vectors of the contact cell in Å.
 
-    In `"wf"` simulations this is used to automatically determine the
-    orbitals that belong to this contact.
+    This is used to automatically determine the orbitals that belong to
+    this contact.
 
     The volume of the contact cell is also used to determine the Fermi
     level of the contact from its doping density and the density of
     states of its band structure.
-
-    !!! warning
-        This parameter is currently only used in the `"wf"` formalism.
 
     !!! note
         When building the device from unit cell, this parameter is not
@@ -1019,9 +972,6 @@ class ContactConfig(BaseModel):
     When set explicitly, this may lead to physically inconsistent
     results, especially in the context of Schrödinger-Poisson
     simulations.
-
-    !!! warning
-        This parameter is currently only used in the `"wf"` formalism.
 
     """
 
@@ -1108,28 +1058,6 @@ class ElectronConfig(BaseModel):
     eta: NonNegativeFloat = 1e-12  # eV
     """Small imaginary value to add to the energy when computing the
     Green's functions.
-
-    """
-
-    left_contact: ContactConfig | None = None
-    """Configuration for the left contact.
-
-    This must be provided for any `"negf"` simulation.
-
-    !!! note
-
-        In `"wf"` simulations, the left and right contacts are not used.
-
-    """
-
-    right_contact: ContactConfig | None = None
-    """Configuration for the right contact.
-
-    This must be provided for any `"negf"` simulation.
-
-    !!! note
-
-        In `"wf"` simulations, the left and right contacts are not used.
 
     """
 
@@ -1223,27 +1151,6 @@ class ElectronConfig(BaseModel):
     This can help mitigate memory bottlenecks.
 
     """
-
-    @model_validator(mode="after")
-    def check_mid_gap_energy_band_edge_tracking(self) -> Self:
-        """Checks that the mid-gap-energy is set if band edge tracking is enabled."""
-        if self.band_edge_tracking:
-            if (
-                self.left_contact is not None
-                and self.left_contact.mid_gap_energy is None
-            ):
-                raise ValueError(
-                    "When band edge tracking is enabled, the `mid_gap_energy` of the left contact must be set."
-                )
-            if (
-                self.right_contact is not None
-                and self.right_contact.mid_gap_energy is None
-            ):
-                raise ValueError(
-                    "When band edge tracking is enabled, the `mid_gap_energy` of the right contact must be set."
-                )
-
-        return self
 
     @model_validator(mode="after")
     def verify_energies(self) -> Self:
@@ -1548,7 +1455,7 @@ class OutputConfig(BaseModel):
     as it is independet of any interaction cutoffs, since it is computed
     from the temporarily densified Green's functions and self-energies.
 
-    !!! Note
+    !!! note
         Independent of `meir_wingreen_currents`.
 
     """
@@ -1565,7 +1472,7 @@ class OutputConfig(BaseModel):
     as it is independet of any interaction cutoffs, since it is computed
     from the temporarily densified Green's functions and self-energies.
 
-    !!! Note
+    !!! note
         Independent of `device_currents`.
 
     !!! Warning
@@ -1851,8 +1758,15 @@ class DeviceConfig(BaseModel):
 
         names = []
 
+        origins = []
+        lattice_vectors = []
+
         for contact in self.contacts:
             names.append(contact.name)
+            if contact.origin is not None:
+                origins.append(contact.origin)
+            if contact.lattice_vectors is not None:
+                lattice_vectors.append(contact.lattice_vectors)
             if contact._contact_finder_method is not None:
                 raise ValueError(
                     "The `_contact_finder_method` parameter is not user configurable."
@@ -1867,44 +1781,62 @@ class DeviceConfig(BaseModel):
                         "the contact `name` must be either `left` or `right`."
                     )
 
-                if contact.transport_direction is None:
-                    contact.transport_direction = self.transport_direction
-                else:
-                    raise ValueError(
-                        "When the device is constructed from a unit cell,\n"
-                        "the contact `transport_direction` must not be specified."
-                    )
-
-                if (contact.origin is not None) or (
-                    contact.lattice_vectors is not None
+                if (
+                    contact.origin is not None
+                    or contact.lattice_vectors is not None
+                    or contact.transport_direction is not None
                 ):
                     raise ValueError(
-                        "When the device is constructed from a unit cell,\n"
-                        "the contact `origin` and `lattice_vectors` must not be specified."
+                        "When the device is constructed from a unit cell, "
+                        "the contact's `origin`, `lattice_vectors`, and "
+                        "`transport_direction` must not be specified."
                     )
+
+                # Set the transport direction of the contact to be the
+                # same as the device, for processing in the contact
+                # finder.
+                contact.transport_direction = self.transport_direction
 
             else:
                 contact._contact_finder_method = "real_space"
 
-                if contact.origin is None or contact.lattice_vectors is None:
+                if (
+                    contact.origin is None
+                    or contact.lattice_vectors is None
+                    or contact.transport_direction is None
+                ):
                     raise ValueError(
-                        "When the contacts are constructed from real space,\n"
-                        "both `origin` and `lattice_vectors` must be provided."
+                        "When the contacts are constructed from real space, "
+                        " the contact's `origin`, `lattice_vectors`, and "
+                        "`transport_direction` must be provided."
                     )
 
-                if contact.transport_direction is None:
-                    raise ValueError(
-                        "When the contacts are constructed from real space,\n"
-                        "the `transport_direction` must be provided."
-                    )
-
+        # Check that the contacts are uniquely defined
         if len(names) != len(set(names)):
             raise ValueError("The contact names must be unique.")
 
-        # TODO Check that when building from unit cell, both left and
-        # right contacts are present. Currently, the check is avoided to
-        # not conflict with SCBA. Otherwise, we would need to know the
-        # formalism here.
+        # NOTE: This is no the best check since it still allows for
+        # contacts to overlap in real space, but it is a good first
+        # check. For example, if the contact parameters are copied
+        # around.
+        if len(origins) != len({tuple(o) for o in origins}):
+            raise ValueError("The contact origins must be unique.")
+        if len(lattice_vectors) != len(
+            {tuple(tuple(v) for v in lv) for lv in lattice_vectors}
+        ):
+            raise ValueError("The contact lattice vectors must be unique.")
+
+        if len(names) < 2:
+            raise ValueError(
+                "At least two contacts must be defined in the device configuration."
+            )
+        if self.construct_from_unit_cell and (
+            len(names) != 2 or "left" not in names or "right" not in names
+        ):
+            raise ValueError(
+                "When the device is constructed from a unit cell,\n"
+                "both `left` and `right` contacts must be defined."
+            )
 
         return self
 
@@ -2073,10 +2005,6 @@ class BandEdgeConfig(BaseModel):
     `True`.
 
     """
-
-    block_sections: PositiveInt = 1
-    """The number of block sections to use when computing the band
-    edges."""
 
     num_ref_iterations: PositiveInt = 2
     """The number of refinement iterations to use when computing the
@@ -2273,7 +2201,7 @@ class PreProcessConfig(BaseModel):
     This will compute the Fermi level of the contacts based on the
     doping and the mid-gap energy.
 
-    !!! Note
+    !!! note
         This will override the `fermi_level` parameter in the contact
         configuration.
 
@@ -2443,18 +2371,7 @@ class QuatrexConfig(BaseModel):
     @model_validator(mode="after")
     def check_device_contact_voltages(self) -> Self:
         """Checks that at least one contact exists and is grounded."""
-        # TODO: Contacts should be unified between the two formalisms.
-        if self.formalism == "negf":
-            if (
-                self.electron.left_contact is None
-                or self.electron.right_contact is None
-            ):
-                raise ValueError("Both left and right contacts must be defined.")
-            contacts = [self.electron.left_contact, self.electron.right_contact]
-        elif self.formalism == "wf":
-            contacts = self.device.contacts
-        else:
-            raise ValueError(f"Invalid formalism '{self.formalism}'.")
+        contacts = self.device.contacts
 
         if len(contacts) < 2:
             raise ValueError("At least two contacts must be defined.")
@@ -2469,40 +2386,40 @@ class QuatrexConfig(BaseModel):
     @model_validator(mode="after")
     def check_either_fermi_or_midgap(self) -> Self:
         """Checks that either the Fermi level or the mid-gap energy is set."""
-        if self.formalism == "negf":
-            contacts = [self.electron.left_contact, self.electron.right_contact]
-        elif self.formalism == "wf":
-            contacts = self.device.contacts
-        else:
-            raise ValueError(f"Invalid formalism '{self.formalism}'.")
+        contacts = self.device.contacts
 
         for contact in contacts:
             if contact.fermi_level is None and contact.mid_gap_energy is None:
                 raise ValueError(
                     "Either `fermi_level` or `mid_gap_energy` must be set."
                 )
-            if contact.mid_gap_energy is None and self.formalism == "wf":
+
+        return self
+
+    @model_validator(mode="after")
+    def check_wf_reference_midgap(self) -> Self:
+        if self.formalism != "wf":
+            return self
+
+        for contact in self.device.contacts:
+            if contact.voltage == 0 and contact.mid_gap_energy is None:
                 raise ValueError(
-                    "In the 'wf' formalism, `mid_gap_energy` must be set for each contact."
+                    "In the 'wf' formalism, `mid_gap_energy` must be set for the "
+                    "reference contact (i.e. the contact with `voltage=0`) to "
+                    "compute excess charge carrier densities."
                 )
 
         return self
 
     @model_validator(mode="after")
-    def check_contact_direction(self) -> Self:
-        """Checks that the contact direction is set in "wf" formalism."""
-
-        if self.formalism == "negf":
-            # NOTE: The contact direction is not used in the NEGF
-            # formalism.
-            return self
-
-        for contact in self.device.contacts:
-            if contact.transport_direction is None:
-                raise ValueError(
-                    "The `direction` parameter of each contact must be "
-                    "set in the 'wf' formalism."
-                )
+    def check_contact_band_edge_tracking(self) -> Self:
+        """Checks that the mid-gap energy is set for each contact if band edge tracking is enabled."""
+        if self.formalism == "negf" and self.electron.band_edge_tracking:
+            for contact in self.device.contacts:
+                if contact.mid_gap_energy is None:
+                    raise ValueError(
+                        "When band edge tracking is enabled, the `mid_gap_energy` of each contact must be set."
+                    )
 
         return self
 

@@ -707,11 +707,6 @@ def simplified_discovery(
 
     Parameters
     ----------
-    method : str
-        The method to use for contact discovery. Can be either
-        'from_unit' or 'slice'.
-    contact_name : str
-        The name of the contact. Can be either 'left' or 'right'.
     num_orbitals : int
         The total number of orbitals in the device.
     device_config : DeviceConfig

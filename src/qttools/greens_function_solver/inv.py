@@ -116,9 +116,6 @@ class Inv(GFSolver):
         obc_blocks : OBCBlocks, optional
             OBC blocks for lesser, greater and retarded Green's
             functions. By default None.
-        a_hat : DSDBSparse, optional
-            The bare system matrix without self-energy contributions.
-            This is used to compute the device current.
         return_retarded : bool, optional
             Wether the retarded Green's function should be returned
             along with lesser and greater, by default False

@@ -1,6 +1,7 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the quatrex package.
 
-"""Includes the contact class."""
+"""Includes the QTBM contact class."""
+
 
 import itertools
 from collections import defaultdict
@@ -10,20 +11,12 @@ import numpy as np
 
 from qttools import NDArray, sparse, xp
 from qttools.boundary_conditions import obc
-from qttools.comm import comm
 from qttools.nevp import NEVP, Beyn, Full
 from qttools.profiling import Profiler
 from qttools.toeplitz.circulant import construct_circulant_cell
-from qttools.utils.gpu_utils import get_host
-from quatrex.bandstructure.contact import (
-    contact_band_edges,
-    contact_band_structure,
-    contact_doping_density,
-    contact_fermi_level,
-)
+from quatrex.bandstructure.contact import contact_band_structure
+from quatrex.contact.base import BaseContact
 from quatrex.core.config import ContactConfig, NEVPConfig, OBCConfig
-from quatrex.device.contact_discovery import real_space_discovery, simplified_discovery
-from quatrex.grid import monkhorst_pack
 
 profiler = Profiler()
 
@@ -97,110 +90,12 @@ class OBCResult:
         return OBCResult(**kwargs)
 
 
-def order_vector(
-    vector: NDArray,
-    order: str | NDArray | None,
-):
-    """Reorders the elements of the given vector according to the
-    specified order.
-
-    Parameters
-    ----------
-    vector : NDArray
-        The vector to reorder.
-    order : str | NDArray | None
-        The order in which to reorder the elements. The only supported
-        string is "reverse", which reverses the order of the elements.
-
-    Returns
-    -------
-    NDArray
-        The reordered vector.
-
-    """
-
-    if isinstance(order, str) and order not in ["reverse"]:
-        raise ValueError(f"Invalid order string: {order}. Must be 'reverse' or None.")
-    if isinstance(order, xp.ndarray) and order.ndim != 1:
-        raise ValueError(f"Order array must be 1-dimensional, got shape {order.shape}.")
-
-    if order is None:
-        return vector
-    if order == "reverse":
-        return xp.flip(vector, axis=-1)
-    return vector[..., order]
-
-
-def order_block(
-    block: NDArray,
-    order: str | NDArray | None,
-) -> NDArray:
-    """Reorders the blocks of the given matrix according to the
-    specified order.
-
-    Parameters
-    ----------
-    block : NDArray
-        The matrix block to reorder.
-    order : str | NDArray | None
-        The order in which to reorder the blocks. The only supported
-        string is "reverse", which reverses the order of the blocks.
-
-    Returns
-    -------
-    NDArray
-        The reordered matrix block.
-
-    """
-
-    if isinstance(order, str) and order not in ["reverse"]:
-        raise ValueError(f"Invalid order string: {order}. Must be 'reverse' or None.")
-    if isinstance(order, xp.ndarray) and order.ndim != 1:
-        raise ValueError(f"Order array must be 1-dimensional, got shape {order.shape}.")
-
-    if order is None:
-        return block
-    if order == "reverse":
-        return xp.flip(block, axis=(-2, -1))
-    return block[..., :, order][..., order, :]
-
-
-def get_inverse_order(
-    order: str | NDArray | None,
-) -> str | NDArray | None:
-    """Computes the inverse of the given order.
-
-    Parameters
-    ----------
-    order : str | NDArray | None
-
-    Returns
-    -------
-    str | NDArray | None
-        The inverse order, or None if the input order is None.
-
-    """
-    # TODO: This should be only called once inside
-    # the contact.
-
-    if isinstance(order, str) and order not in ["reverse"]:
-        raise ValueError(f"Invalid order string: {order}. Must be 'reverse' or None.")
-    if isinstance(order, xp.ndarray) and order.ndim != 1:
-        raise ValueError(f"Order array must be 1-dimensional, got shape {order.shape}.")
-
-    if order is None:
-        return None
-    if order == "reverse":
-        return "reverse"
-    return xp.argsort(order)
-
-
-class Contact:
+class QTBMContact(BaseContact):
     """Class representing a contact for QTBM calculations.
 
     Parameters
     ----------
-    device : Device
+    device : BaseDevice
         The device object to which this contact is attached. Contains
         the Hamiltonian, overlap matrices, and atomic structure
         information.
@@ -208,17 +103,18 @@ class Contact:
         The configuration object containing the contact settings such as
         lattice vectors, origin, transport direction, and Fermi level
         information.
+    sparsity_pattern : sparse.spmatrix
+        The sparsity pattern of the device Hamiltonian, used to identify
+        the contact orbitals and their connectivity.
 
     Attributes
     ----------
-    device : Device
+    device : BaseDevice
         The device object to which this contact is attached.
     name : str
         The contact identifier.
     transport_direction : int
         Transport direction index (0, 1, or 2).
-    obc_solver : obc.Spectral
-        Configured open boundary condition solver.
     unit_cell_orbital_indices : dict
         Dict of orbital indices for each contact cell indexed by (i, j,
         k) tuples.
@@ -250,389 +146,26 @@ class Contact:
         Voltage applied to the contact in V.
     temperature : float
         Temperature of the contact in K.
+    obc_solver : obc.Spectral
+        Configured open boundary condition solver.
 
     """
 
-    def __init__(self, device, contact_config: ContactConfig):
-        """Initializes the contact object."""
-
-        self.device = device
-        self.contact_config = contact_config
-        if contact_config.transport_direction not in ["a", "b", "c"]:
-            raise ValueError("Direction must be one of 'a', 'b', or 'c'.")
-
-        self.name = contact_config.name
-        self.transport_direction = "abc".index(contact_config.transport_direction)
-
-        if contact_config._contact_finder_method == "real_space":
-            self.unit_cell_orbital_indices, repetition_grid, self.origin_key = (
-                real_space_discovery(
-                    hamiltonian=device.hamiltonians[0, 0, 0],
-                    atomic_species=device.atomic_species,
-                    atom_coordinates=device.atom_coordinates,
-                    orbital_offsets=device.orbital_offsets,
-                    contact_config=contact_config,
-                )
-            )
-        elif contact_config._contact_finder_method == "from_unit":
-            self.unit_cell_orbital_indices, repetition_grid, self.origin_key = (
-                simplified_discovery(
-                    num_orbitals=len(device.orbital_coordinates),
-                    device_config=device.config.device,
-                    contact_config=contact_config,
-                )
-            )
-        else:
-            raise NotImplementedError(
-                f"Contact finder method '{contact_config._contact_finder_method}' not implemented."
-            )
-
-        self.transport_repetitions = repetition_grid[self.transport_direction]
-        self.transverse_repetition_grid = (
-            repetition_grid[: self.transport_direction]
-            + repetition_grid[self.transport_direction + 1 :]
-        )
-
-        if comm.rank == 0:
-            print(
-                f"    Number of repetitions in transport direction: {self.transport_repetitions}",
-                flush=True,
-            )
-
-        ny, nz = self.transverse_repetition_grid
-
-        # Orbitals for contact (where to apply the OBC)
-        # Sorted first in transport direction, then in transverse directions
-        self.orbital_indices = np.concatenate(
-            [
-                self.unit_cell_orbital_indices[i, j, k]
-                for j, k, i in np.ndindex(ny, nz, self.transport_repetitions)
-            ]
-        )
-        # When getting the coupling matrix (01) for spill over,
-        # it is more efficient to have it sorted first in transverse, then in transport
-        # The orbital list is then different.
-        # We keep it separated over slice over transport direction.
-        self.orbital_indices_per_layer = [
-            np.concatenate(
-                [self.unit_cell_orbital_indices[i, j, k] for j, k in np.ndindex(ny, nz)]
-            )
-            for i in range(self.transport_repetitions + 1)
-        ]
-
-        # We then need to sort the 10 matrix to have the same ordering as the contact OBCs
-        origin_num_orbitals = len(self.unit_cell_orbital_indices[self.origin_key])
-        self.transverse_to_transport_indices = np.concatenate(
-            [
-                np.arange(origin_num_orbitals)
-                + i * origin_num_orbitals
-                + k * origin_num_orbitals * ny * nz
-                for i in range(ny * nz)
-                for k in range(self.transport_repetitions)
-            ],
-            dtype=int,
-        )[None, :]
+    def __init__(
+        self,
+        device,
+        contact_config: ContactConfig,
+        sparsity_pattern: sparse.spmatrix,
+    ):
+        super().__init__(device, contact_config, sparsity_pattern)
 
         # TODO: The obc and nevp config should be directly associated with the contact
         # with either a config per contact or a config per contact.
         # This will be simpler when unifying QTBM and SCBA.
         self.obc_solver = self._configure_obc(
-            device.config.electron.obc, device.config.compute.nevp
+            self.device.config.electron.obc,
+            self.device.config.compute.nevp,
         )
-
-        self.fermi_level = contact_config.fermi_level
-        self.mid_gap_energy = contact_config.mid_gap_energy
-        self.conduction_band_edge = contact_config.conduction_band_edge
-        self.voltage = contact_config.voltage
-        self.temperature = contact_config.temperature
-
-        if contact_config._contact_finder_method == "real_space":
-            lattice_vectors = contact_config.lattice_vectors
-        elif contact_config._contact_finder_method == "from_unit":
-            lattice_vectors = device.lattice_vectors
-        else:
-            raise NotImplementedError(
-                f"Contact finder method '{contact_config._contact_finder_method}' not implemented."
-            )
-
-        self.cell_volume = np.abs(np.linalg.det(lattice_vectors)) * np.prod(
-            repetition_grid
-        )
-
-        if comm.rank == 0:
-            print(f"    Fermi level: {self.fermi_level} eV", flush=True)
-            print(f"    Mid-gap energy: {self.mid_gap_energy} eV", flush=True)
-            print(
-                f"    Conduction band edge: {self.conduction_band_edge} eV",
-                flush=True,
-            )
-            print(f"    Voltage: {self.voltage} V", flush=True)
-            print(f"    Temperature: {self.temperature} K", flush=True)
-
-    def _configure_obc(
-        self, obc_config: OBCConfig, nevp_config: NEVPConfig
-    ) -> obc.Spectral:
-        """Configures the OBC solver.
-
-        Parameters
-        ----------
-        obc_config : OBCConfig
-            Configuration object containing OBC algorithm settings
-            including solver type, convergence parameters, and numerical
-            options.
-        nevp_config : NEVPConfig
-            Configuration object containing NEVP solver settings
-            including solver type and algorithm-specific parameters.
-
-        Returns
-        -------
-        obc_solver: obc.Spectral
-            Configured spectral OBC solver ready for boundary condition
-            calculations.
-
-        """
-        if obc_config.algorithm == "sancho-rubio":
-            raise NotImplementedError(
-                "Sancho-rubio OBC algorithm does not work with QTBM, please use spectral OBC solver."
-            )
-
-        if obc_config.algorithm == "spectral":
-            nevp = self._configure_nevp(obc_config, nevp_config)
-            obc_solver = obc.Spectral(
-                nevp=nevp,
-                block_sections=self.transport_repetitions,  # WARNING: overrides config
-                min_decay=obc_config.min_decay,
-                max_decay=obc_config.max_decay,
-                num_ref_iterations=obc_config.num_ref_iterations,
-                min_propagation=obc_config.min_propagation,
-                residual_tolerance=obc_config.residual_tolerance,
-                residual_normalization=obc_config.residual_normalization,
-                eta_decay=obc_config.eta_decay,
-                warning_threshold=obc_config.warning_threshold,
-            )
-
-        else:
-            raise NotImplementedError(
-                f"OBC algorithm '{obc_config.algorithm}' not implemented."
-            )
-
-        return obc_solver
-
-    def _configure_nevp(self, obc_config: OBCConfig, nevp_config: NEVPConfig) -> NEVP:
-        """Configures the Nonlinear Eigenvalue Problem (NEVP) solver.
-
-        Parameters
-        ----------
-        obc_config : OBCConfig
-            Configuration object containing NEVP solver settings
-            including solver type and algorithm-specific parameters.
-        nevp_config : NEVPConfig
-            Configuration object containing NEVP solver settings
-            including solver type and algorithm-specific parameters.
-
-        Returns
-        -------
-        NEVP
-            Configured NEVP solver ready for eigenvalue calculations.
-
-        """
-        if obc_config.nevp_solver == "beyn":
-            return Beyn(
-                r_o=obc_config.r_o,
-                r_i=obc_config.r_i,
-                m_0=obc_config.m_0,
-                num_quad_points=obc_config.num_quad_points,
-                num_threads_contour=nevp_config.num_threads_contour,
-                eig_compute_location=nevp_config.eig_compute_location,
-                project_compute_location=nevp_config.project_compute_location,
-                use_qr=nevp_config.use_qr,
-                contour_batch_size=nevp_config.contour_batch_size,
-                use_pinned_memory=nevp_config.use_pinned_memory,
-            )
-        if obc_config.nevp_solver == "full":
-            return Full(
-                eig_compute_location=nevp_config.eig_compute_location,
-                use_pinned_memory=nevp_config.use_pinned_memory,
-                reduce=nevp_config.reduce_sparsity,
-            )
-
-        raise NotImplementedError(
-            f"NEVP solver '{obc_config.nevp_solver}' not implemented."
-        )
-
-    def compute_contact_bandstructure(
-        self,
-        h_xx: dict,
-        s_xx: dict,
-        kpoint: NDArray,
-        kpoints_transport: NDArray,
-    ) -> NDArray:
-        """Slices and expands the inptut matrices, and computes the contact
-        band structure for at a specific k-point.
-
-        Parameters
-        ----------
-        h_xx : dict
-            The Hamiltonian matrix blocks of a single contact layer. Already
-            summed over k-points.
-        s_xx : dict
-            The overlap matrix blocks of a single contact layer. Already
-            summed over k-points.
-        kpoint : NDArray
-            The k-point at which to compute the band structure.
-        kpoints_transport : NDArray
-            The k-points along the transport direction.
-
-        Returns
-        -------
-        e_k : np.ndarray
-            The eigenvalues for the contact band structure.
-
-        """
-        grid = (self.transport_repetitions + 1,) + self.transverse_repetition_grid
-
-        h_xx_tmp = {}
-        s_xx_tmp = {}
-        # shuffle keys to to have natural order a,b,c
-        for i, j, k in np.ndindex(*grid):
-            index = [j, k]
-            index.insert(self.transport_direction, i)
-            index = tuple(index)
-            h_xx_tmp[index] = h_xx[i, j, k].toarray()
-            s_xx_tmp[index] = s_xx[i, j, k].toarray()
-        h_xx = h_xx_tmp
-        s_xx = s_xx_tmp
-
-        phases = tuple(np.exp(2j * np.pi * k) for k in kpoint)
-        phases = (
-            phases[: self.transport_direction] + phases[self.transport_direction + 1 :]
-        )
-
-        H_XX = tuple(
-            construct_circulant_cell(
-                matrix_dict=h_xx,
-                transport_cell_size=self.transport_repetitions,
-                transport_ind=self.transport_direction,
-                block_index=block_index,
-                sections=self.transverse_repetition_grid,
-                phases=phases,
-                key_assumption="half",
-            )
-            for block_index in [-1, 0, 1]
-        )
-        S_XX = tuple(
-            construct_circulant_cell(
-                matrix_dict=s_xx,
-                transport_cell_size=self.transport_repetitions,
-                transport_ind=self.transport_direction,
-                block_index=block_index,
-                sections=self.transverse_repetition_grid,
-                phases=phases,
-                key_assumption="half",
-            )
-            for block_index in [-1, 0, 1]
-        )
-
-        return contact_band_structure(kpoints_transport, H_XX, S_XX)
-
-    def compute_contact_band_properties(
-        self,
-    ) -> tuple[float, float, float]:
-        """Computes the Fermi level for the contact from the Hamiltonian and
-        overlap matrices.
-
-        Returns
-        -------
-        fermi_level : float
-            The computed Fermi level in eV.
-        mid_gap_energy : float
-            The recomputed mid-gap energy based on the band structure.
-        conduction_band_edge : float
-            The energy of the conduction band edge in eV.
-
-        """
-        contact_config = self.contact_config
-        device_config = self.device.device_config
-
-        kpoints_transport = xp.linspace(
-            -xp.pi,
-            xp.pi,
-            contact_config.num_kpoints_transport,
-            endpoint=False,
-        )
-
-        transverse_axes = [0, 1, 2]
-        transverse_axes.remove(self.transport_direction)
-
-        kpoints = monkhorst_pack(device_config.kpoint_grid, device_config.kpoint_shift)
-
-        e_k = xp.zeros(
-            (
-                len(kpoints_transport),
-                kpoints.shape[0],
-                len(self.unit_cell_orbital_indices[self.origin_key])
-                * self.transport_repetitions
-                * np.prod(self.transverse_repetition_grid),
-            ),
-            dtype=float,
-        )
-
-        hamiltonians = self.device.hamiltonians
-        overlaps = self.device.overlap_matrices
-        for m, kpoint in enumerate(kpoints):
-            h_xx = self.get_contact_blocks(
-                matrices=hamiltonians,
-                kpoint=kpoint,
-                upper=True,
-            )
-            s_xx = self.get_contact_blocks(
-                matrices=overlaps,
-                kpoint=kpoint,
-                upper=True,
-            )
-
-            e_k[:, m, :] = self.compute_contact_bandstructure(
-                h_xx=h_xx,
-                s_xx=s_xx,
-                kpoint=kpoint,
-                kpoints_transport=kpoints_transport,
-            )
-
-        # Average over transverse k-points.
-        e_k = xp.mean(e_k, axis=1)
-
-        doping_density = contact_doping_density(
-            coordinates=get_host(
-                self.device.orbital_coordinates[
-                    self.unit_cell_orbital_indices[self.origin_key]
-                ]
-            ),
-            geometry_regions=device_config.geometry.regions,
-        )
-
-        fermi_level = contact_fermi_level(
-            e_k=e_k,
-            kpoints=kpoints_transport,
-            mid_gap_energy=self.mid_gap_energy,
-            cell_volume=self.cell_volume,
-            doping_density=doping_density,
-            temperature=self.temperature,
-        )
-
-        # Recompute the actual mid-gap energy from the band structure.
-        valence_band_edge, conduction_band_edge = contact_band_edges(
-            e_k, self.mid_gap_energy
-        )
-        mid_gap_energy = 0.5 * (conduction_band_edge + valence_band_edge)
-
-        if comm.rank == 0:
-            print(f"    Doping density: {doping_density} Å^-3", flush=True)
-            print(f"    Fermi level: {fermi_level} eV", flush=True)
-            print(f"    Conduction band minimum: {conduction_band_edge} eV", flush=True)
-            print(f"    Valence band maximum: {valence_band_edge} eV", flush=True)
-            print(f"    Recomputed mid-gap energy: {mid_gap_energy} eV", flush=True)
-
-        return fermi_level, mid_gap_energy, conduction_band_edge
 
     def get_coupling_matrix(
         self, M: sparse.spmatrix, transpose: bool = False
@@ -877,7 +410,7 @@ class Contact:
 
         return modes
 
-    def slice_matrix(
+    def _slice_matrix(
         self,
         M: sparse.spmatrix,
         upper: bool = False,
@@ -917,7 +450,7 @@ class Contact:
 
         return M_slice
 
-    def get_contact_blocks(
+    def _get_contact_blocks(
         self,
         matrices: dict,
         kpoint: NDArray,
@@ -946,7 +479,7 @@ class Contact:
         origin_orbital_indices = self.unit_cell_orbital_indices[self.origin_key]
 
         # NOTE: Needs to slice and multiply the phase at once using
-        # `slice_matrix` would be wrong with `upper=True` since not each
+        # `_slice_matrix` would be wrong with `upper=True` since not each
         # k-point hamiltonian is hermitian, but only the sum over all
         # k-points is hermitian.
 
@@ -1020,7 +553,7 @@ class Contact:
         num_energies = 1
 
         ny, nz = self.transverse_repetition_grid
-        M_slice = self.slice_matrix(
+        M_slice = self._slice_matrix(
             M=M,
             upper=upper_M,
         )
@@ -1122,3 +655,190 @@ class Contact:
             obc_result.bloch_k = bloch_k
 
         return obc_result
+
+    def _configure_obc(
+        self,
+        obc_config: OBCConfig,
+        nevp_config: NEVPConfig,
+    ) -> obc.Spectral:
+        """Configures the OBC solver.
+
+        Parameters
+        ----------
+        obc_config : OBCConfig
+            Configuration object containing OBC algorithm settings
+            including solver type, convergence parameters, and numerical
+            options.
+        nevp_config : NEVPConfig
+            Configuration object containing NEVP solver settings
+            including solver type and algorithm-specific parameters.
+
+        Returns
+        -------
+        obc_solver: obc.Spectral
+            Configured spectral OBC solver ready for boundary condition
+            calculations.
+
+        """
+        if obc_config.algorithm == "sancho-rubio":
+            raise NotImplementedError(
+                "Sancho-rubio OBC algorithm does not work with QTBM, please use spectral OBC solver."
+            )
+
+        if obc_config.algorithm == "spectral":
+            nevp = self._configure_nevp(obc_config, nevp_config)
+            obc_solver = obc.Spectral(
+                nevp=nevp,
+                block_sections=self.transport_repetitions,
+                min_decay=obc_config.min_decay,
+                max_decay=obc_config.max_decay,
+                num_ref_iterations=obc_config.num_ref_iterations,
+                min_propagation=obc_config.min_propagation,
+                residual_tolerance=obc_config.residual_tolerance,
+                residual_normalization=obc_config.residual_normalization,
+                eta_decay=obc_config.eta_decay,
+                warning_threshold=obc_config.warning_threshold,
+            )
+
+        else:
+            raise NotImplementedError(
+                f"OBC algorithm '{obc_config.algorithm}' not implemented."
+            )
+
+        return obc_solver
+
+    def _configure_nevp(
+        self,
+        obc_config: OBCConfig,
+        nevp_config: NEVPConfig,
+    ) -> NEVP:
+        """Configures the Nonlinear Eigenvalue Problem (NEVP) solver.
+
+        Parameters
+        ----------
+        obc_config : OBCConfig
+            Configuration object containing NEVP solver settings
+            including solver type and algorithm-specific parameters.
+        nevp_config : NEVPConfig
+            Configuration object containing NEVP solver settings
+            including solver type and algorithm-specific parameters.
+
+        Returns
+        -------
+        NEVP
+            Configured NEVP solver ready for eigenvalue calculations.
+
+        """
+        if obc_config.nevp_solver == "beyn":
+            return Beyn(
+                r_o=obc_config.r_o ** (1 / self.transport_repetitions),
+                r_i=obc_config.r_i ** (1 / self.transport_repetitions),
+                m_0=obc_config.m_0,
+                num_quad_points=obc_config.num_quad_points,
+                num_threads_contour=nevp_config.num_threads_contour,
+                eig_compute_location=nevp_config.eig_compute_location,
+                project_compute_location=nevp_config.project_compute_location,
+                use_qr=nevp_config.use_qr,
+                contour_batch_size=nevp_config.contour_batch_size,
+                use_pinned_memory=nevp_config.use_pinned_memory,
+            )
+        if obc_config.nevp_solver == "full":
+            return Full(
+                eig_compute_location=nevp_config.eig_compute_location,
+                use_pinned_memory=nevp_config.use_pinned_memory,
+                reduce=nevp_config.reduce_sparsity,
+            )
+
+        raise NotImplementedError(
+            f"NEVP solver '{obc_config.nevp_solver}' not implemented."
+        )
+
+    def compute_contact_bandstructure(
+        self,
+        kpoints_transport: NDArray,
+    ) -> NDArray:
+        """Computes the band structure for the contact along the
+        transport direction.
+
+        Parameters
+        ----------
+        kpoints_transport : NDArray
+            The k-points along the transport direction.
+
+        Returns
+        -------
+        e_k : NDArray
+            The eigenvalues for the contact band structure.
+
+        """
+        e_k = xp.zeros(
+            (
+                len(kpoints_transport),
+                self.device.kpoints.shape[0],
+                len(self.unit_cell_orbital_indices[self.origin_key])
+                * self.transport_repetitions
+                * np.prod(self.transverse_repetition_grid),
+            ),
+            dtype=float,
+        )
+
+        for m, kpoint in enumerate(self.device.kpoints):
+            h_xx = self._get_contact_blocks(
+                matrices=self.device.hamiltonians,
+                kpoint=kpoint,
+                upper=True,
+            )
+            s_xx = self._get_contact_blocks(
+                matrices=self.device.overlap_matrices,
+                kpoint=kpoint,
+                upper=True,
+            )
+
+            grid = (self.transport_repetitions + 1,) + self.transverse_repetition_grid
+
+            h_xx_tmp = {}
+            s_xx_tmp = {}
+            # shuffle keys to to have natural order a,b,c
+            for i, j, k in np.ndindex(*grid):
+                index = [j, k]
+                index.insert(self.transport_direction, i)
+                index = tuple(index)
+                h_xx_tmp[index] = h_xx[i, j, k].toarray()
+                s_xx_tmp[index] = s_xx[i, j, k].toarray()
+            h_xx = h_xx_tmp
+            s_xx = s_xx_tmp
+
+            phases = tuple(np.exp(2j * np.pi * k) for k in kpoint)
+            phases = (
+                phases[: self.transport_direction]
+                + phases[self.transport_direction + 1 :]
+            )
+
+            H_XX = tuple(
+                construct_circulant_cell(
+                    matrix_dict=h_xx,
+                    transport_cell_size=self.transport_repetitions,
+                    transport_ind=self.transport_direction,
+                    block_index=block_index,
+                    sections=self.transverse_repetition_grid,
+                    phases=phases,
+                    key_assumption="half",
+                )
+                for block_index in [-1, 0, 1]
+            )
+            S_XX = tuple(
+                construct_circulant_cell(
+                    matrix_dict=s_xx,
+                    transport_cell_size=self.transport_repetitions,
+                    transport_ind=self.transport_direction,
+                    block_index=block_index,
+                    sections=self.transverse_repetition_grid,
+                    phases=phases,
+                    key_assumption="half",
+                )
+                for block_index in [-1, 0, 1]
+            )
+
+            e_k[:, m, :] = contact_band_structure(kpoints_transport, H_XX, S_XX)
+
+        return e_k

@@ -3,7 +3,6 @@
 """Includes the electron solver."""
 
 from collections.abc import Callable
-from typing import Literal
 
 import numpy as np
 
@@ -18,18 +17,11 @@ from qttools.utils.mpi_utils import get_local_slice, get_section_sizes
 from qttools.utils.solvers_utils import get_batches
 from qttools.utils.stack_utils import scale_stack
 from quatrex.bandstructure.band_edges import find_renormalized_eigenvalues
-from quatrex.bandstructure.contact import (
-    contact_band_edges,
-    contact_band_structure,
-    contact_doping_density,
-    contact_fermi_level,
-)
+from quatrex.contact.scba import SCBAContact, get_inverse_order, order_block
 from quatrex.core.config import QuatrexConfig
 from quatrex.core.statistics import fermi_dirac
 from quatrex.core.subsystem import SubsystemSolver
-from quatrex.device import Device
-from quatrex.device.contact import get_inverse_order, order_block
-from quatrex.device.inputs import assemble_matrix
+from quatrex.device import SCBADevice
 
 profiler = Profiler()
 
@@ -566,6 +558,8 @@ class ElectronSolver(SubsystemSolver):
     ----------
     config : QuatrexConfig
         The quatrex simulation configuration.
+    device : SCBADevice
+        The device for which to solve the subsystem.
     energies : np.ndarray
         The energies at which to solve.
 
@@ -576,70 +570,18 @@ class ElectronSolver(SubsystemSolver):
     def __init__(
         self,
         config: QuatrexConfig,
+        device: SCBADevice,
         energies: NDArray,
     ) -> None:
         """Initializes the electron solver."""
-        super().__init__(config, energies)
+        super().__init__(config, device, energies)
 
         self.local_energies = get_local_slice(energies, comm.stack)
-
-        # Load the device Hamiltonian.
-        self.hamiltonian, __ = assemble_matrix(
-            config=config,
-            matrix_name="hamiltonian",
-            sparsity_pattern=None,
-            shift_kpoints=False,
-        )
-        self.block_sizes = self.hamiltonian.block_sizes
-
-        try:
-            # Attempt to load the device overlap matrix.
-            self.overlap, __ = assemble_matrix(
-                config=config,
-                matrix_name="overlap",
-                sparsity_pattern=None,
-                shift_kpoints=False,
-            )
-
-            # Check that the overlap matrix and Hamiltonian matrix match.
-            if self.overlap.shape != self.hamiltonian.shape:
-                raise ValueError(
-                    "Overlap matrix and Hamiltonian matrix have different shapes."
-                )
-
-            if comm.rank == 0:
-                print("Non-orthogonal basis detected.", flush=True)
-
-        except FileNotFoundError:
-            self.overlap = None
-            if comm.rank == 0:
-                print("No overlap matrix found. Assuming orthogonal basis.", flush=True)
 
         # Will be initialized in the `_assemble_system_matrix` method.
         self.system_matrix = None
         self.bare_system_matrix = None
 
-        self.block_offsets = np.hstack(([0], np.cumsum(self.block_sizes)))
-        # Check that the provided block sizes match the Hamiltonian.
-        if self.block_sizes.sum() != self.hamiltonian.shape[-2]:
-            raise ValueError(
-                "Block sizes do not match Hamiltonian. "
-                f"{self.block_sizes.sum()} != {self.hamiltonian.shape[-2]}"
-            )
-
-        # Load the potential.
-        # TODO: The structure should not be reloaded here.
-        # This will be fixed when the device is unified.
-        __, atom_coordinates, atomic_species, __ = Device.load_structure(config)
-        self.potential = Device.load_potential(
-            config.input_dir,
-            atom_coordinates,
-            atomic_species,
-            config.device.num_orbitals_per_atom,
-        )
-
-        if self.potential.size != self.hamiltonian.shape[-2]:
-            raise ValueError("Potential matrix and Hamiltonian have different shapes.")
         self.eta = config.electron.eta
         self.eta_obc = config.electron.eta_obc
 
@@ -656,88 +598,24 @@ class ElectronSolver(SubsystemSolver):
         # Band edges and Fermi levels.
         self.band_edge_tracking = config.electron.band_edge_tracking
 
-        orbitals_per_atom = [
-            config.device.num_orbitals_per_atom.get(species, 1)
-            for species in atomic_species
-        ]
-        orbital_coordinates = np.repeat(atom_coordinates, orbitals_per_atom, axis=0)
-
-        left_band_edge_info = xp.empty(3, dtype=float)
-        if comm.block.rank == 0:
-            # Quantities related to the left contact.
-            left_band_edge_info = self._configure_contact_band_edges(
-                config=config,
-                hamiltonian=self.hamiltonian,
-                overlap=self.overlap,
-                coordinates=orbital_coordinates[: self.block_sizes[0]],
-                side="left",
-            )
-
-        comm.block.bcast(left_band_edge_info, root=0)
-
-        (
-            self.left_fermi_level,
-            self.left_mid_gap_energy,
-            self.left_delta_fermi_level_conduction_band,
-        ) = left_band_edge_info
-        self.left_voltage = config.electron.left_contact.voltage
-        self.left_mid_gap_energy -= self.left_voltage
-
-        self.left_temperature = config.electron.left_contact.temperature
-
-        mu_left = self.left_fermi_level - self.left_voltage
-        self.left_occupancies = fermi_dirac(
-            self.local_energies - mu_left, self.left_temperature
-        )
-
-        if comm.rank == 0:
-            print(
-                f"Left contact: \n"
-                f"  Fermi level: {self.left_fermi_level} eV\n"
-                f"  Mid-gap energy: {self.left_mid_gap_energy} eV\n"
-                f"  Conduction band edge - Fermi level: {self.left_delta_fermi_level_conduction_band} eV\n",
-                flush=True,
-            )
-
-        right_band_edge_info = xp.empty(3, dtype=float)
-        if comm.block.rank == comm.block.size - 1:
-            # Quantities related to the right contact.
-            right_band_edge_info = self._configure_contact_band_edges(
-                config=config,
-                hamiltonian=self.hamiltonian,
-                overlap=self.overlap,
-                coordinates=orbital_coordinates[-self.block_sizes[-1] :],
-                side="right",
-            )
-
-        comm.block.bcast(right_band_edge_info, root=comm.block.size - 1)
-        (
-            self.right_fermi_level,
-            self.right_mid_gap_energy,
-            self.right_delta_fermi_level_conduction_band,
-        ) = right_band_edge_info
-
-        self.right_voltage = config.electron.right_contact.voltage
-        self.right_mid_gap_energy -= self.right_voltage
-        self.right_temperature = config.electron.right_contact.temperature
-        # Compute contact chemical potentials and occupancies.
-        mu_right = self.right_fermi_level - self.right_voltage
-        self.right_occupancies = fermi_dirac(
-            self.local_energies - mu_right, self.right_temperature
-        )
-
-        if comm.rank == 0:
-            print(
-                f"Right contact: \n"
-                f"  Fermi level: {self.right_fermi_level} eV\n"
-                f"  Mid-gap energy: {self.right_mid_gap_energy} eV\n"
-                f"  Conduction band edge - Fermi level: {self.right_delta_fermi_level_conduction_band} eV\n",
-                flush=True,
+        self.delta_fermi_level_conduction_band = {}
+        self.occupancies = {}
+        for contact in self.device.contacts:
+            if self.band_edge_tracking:
+                # TODO: The conduction band edge that gets computed from
+                # the contact band structure has a slightly different
+                # meaning from what is used for the band edge tracking.
+                # See issue #352 for more details.
+                self.delta_fermi_level_conduction_band[contact] = (
+                    contact.conduction_band_edge - contact.fermi_level
+                )
+            mu = contact.fermi_level - contact.voltage
+            self.occupancies[contact] = fermi_dirac(
+                self.local_energies - mu, contact.temperature
             )
 
         # Prepare Buffers for OBC.
-        self.obc_blocks = OBCBlocks(num_blocks=self.hamiltonian.num_local_blocks)
-        self.block_sections = config.electron.obc.block_sections
+        self.obc_blocks = OBCBlocks(num_blocks=device.hamiltonians.num_local_blocks)
 
         self.meir_wingreen_current = None
         self.device_current = None
@@ -747,228 +625,58 @@ class ElectronSolver(SubsystemSolver):
 
         self.max_batch_size = config.electron.max_batch_size
 
-    @staticmethod
-    def _configure_contact_band_edges(
-        config: QuatrexConfig,
-        hamiltonian: DSDBSparse,
-        overlap: DSDBSparse | None,
-        coordinates: NDArray,
-        side: Literal["left", "right"],
-    ) -> NDArray:
-        """Configures the contact band edges and Fermi level.
-
-        Parameters
-        ----------
-        config : QuatrexConfig
-            The quatrex simulation configuration.
-        hamiltonian : DSDBSparse
-            The Hamiltonian matrix of the contact.
-        overlap : DSDBSparse | None
-            The overlap matrix of the contact. If None, the overlap is
-            assumed to be the identity.
-        coordinates : NDArray
-            The orbital coordinates of the contact. This is needed to
-            determine the doping density of the contact.
-        side : Literal["left", "right"]
-            The contact side for which to configure the band edges.
-
-        Returns
-        -------
-        band_edge_info : NDArray
-            An array containing the Fermi level, mid-gap energy and the
-            difference between the conduction band edge and the Fermi
-            level of the contact. The order is (fermi_level,
-            mid_gap_energy, delta_fermi_level_conduction_band). The
-            `delta_fermi_level_conduction_band` returns NaN if Fermi
-            level is provided and the band edge tracking is disabled.
-
-        """
-        if comm.block.size != 1:
-            if comm.block.rank == 0 and side != "left":
-                raise ValueError(
-                    "Left contact band edge configuration must only be performed on the first block rank."
-                )
-            if comm.block.rank == comm.block.size - 1 and side != "right":
-                raise ValueError(
-                    "Right contact band edge configuration must only be performed on the last block rank."
-                )
-
-        contact_config = getattr(config.electron, f"{side}_contact")
-
-        if (
-            not config.electron.band_edge_tracking
-            and contact_config.fermi_level is not None
-            and config.scsp is None
-        ):
-            # If band edge tracking is disabled and the Fermi level is
-            # provided, we can directly return the provided Fermi level.
-            # The difference between the conduction band edge and the
-            # Fermi level is definitely not needed in this case, so we
-            # return NaN for that.
-            mid_gap_energy = (
-                xp.nan
-                if contact_config.mid_gap_energy is None
-                else contact_config.mid_gap_energy
-            )
-            return xp.array([contact_config.fermi_level, mid_gap_energy, xp.nan])
-
-        # TODO: Block sectioning could be easily integrated here. Also
-        # exploit that these are Hermitian.
-        n = hamiltonian.num_local_blocks - 1
-        m = n - 1
-        diagonal_inds = (0, 0) if side == "left" else (n, n)
-        upper_inds = (0, 1) if side == "left" else (n, m)
-
-        h_xx = (
-            hamiltonian.blocks[*upper_inds[::-1]],
-            hamiltonian.blocks[*diagonal_inds],
-            hamiltonian.blocks[*upper_inds],
-        )
-
-        if overlap is not None:
-            s_xx = (
-                overlap.blocks[*upper_inds[::-1]],
-                overlap.blocks[*diagonal_inds],
-                overlap.blocks[*upper_inds],
-            )
-        else:
-            s_xx = None
-
-        kpoints_transport = np.linspace(
-            -np.pi,
-            np.pi,
-            contact_config.num_kpoints_transport,
-            endpoint=False,
-        )
-        e_k = contact_band_structure(kpoints_transport, h_xx, s_xx)
-
-        # Average over all dimensions, except for the transport k-point
-        # dimension and the last dimension corresponding to the
-        # eigenvalues.
-        e_k = xp.mean(e_k, axis=tuple(range(1, e_k.ndim - 1)))
-        e_k = xp.sort(e_k, axis=-1)
-
-        valence_band_edge, conduction_band_edge = contact_band_edges(
-            e_k, contact_config.mid_gap_energy
-        )
-        mid_gap_energy = 0.5 * (conduction_band_edge + valence_band_edge)
-
-        if comm.rank == 0:
-            print(
-                f"{side.capitalize()} contact band edges:\n"
-                f"  Conduction band edge: {conduction_band_edge} eV\n"
-                f"  Valence band edge: {valence_band_edge} eV\n",
-                flush=True,
-            )
-
-        if contact_config.fermi_level is not None:
-            # The Fermi level is provided, no need to compute.
-            delta_fermi_level_conduction_band = (
-                conduction_band_edge - contact_config.fermi_level
-            )
-
-            return xp.array(
-                [
-                    contact_config.fermi_level,
-                    mid_gap_energy,
-                    delta_fermi_level_conduction_band,
-                ]
-            )
-
-        doping_density = contact_doping_density(
-            coordinates=coordinates,
-            geometry_regions=config.device.geometry.regions,
-        )
-
-        fermi_level = contact_fermi_level(
-            e_k=e_k,
-            kpoints=kpoints_transport,
-            mid_gap_energy=mid_gap_energy,
-            cell_volume=np.abs(np.linalg.det(contact_config.lattice_vectors)),
-            doping_density=doping_density,
-            temperature=contact_config.temperature,
-        )
-
-        return xp.array(
-            [fermi_level, mid_gap_energy, conduction_band_edge - fermi_level]
-        )
-
-    def _update_fermi_levels(
+    def _update_fermi_level(
         self,
-        left_band_edges: NDArray | None,
-        right_band_edges: NDArray | None,
+        contact: SCBAContact,
+        band_edges: NDArray,
     ) -> None:
         """Updates the Fermi levels.
 
+        Note
+        ----
+        This method overwrites properties of the contact.
+
         Parameters
         ----------
-        left_band_edges : NDArray | None
-            The left contact band edges. If None, the left Fermi level is not updated.
-        right_band_edges : NDArray | None
-            The right contact band edges. If None, the right Fermi level is not updated.
+        contact : SCBAContact
+            The contact for which to update the Fermi level.
+        band_edges : NDArray
+            The band edges.
 
         """
-        if left_band_edges is not None:
-            self.left_mid_gap_energy = xp.mean(left_band_edges)
-            __, left_conduction_band_edge = left_band_edges
-            self.left_fermi_level = (
-                left_conduction_band_edge - self.left_delta_fermi_level_conduction_band
+        contact.mid_gap_energy = xp.mean(band_edges)
+        __, conduction_band_edge = band_edges
+        contact.fermi_level = (
+            conduction_band_edge - self.delta_fermi_level_conduction_band[contact]
+        )
+        mu = contact.fermi_level - contact.voltage
+        self.occupancies[contact] = fermi_dirac(
+            self.local_energies - mu, contact.temperature
+        )
+        if comm.rank == 0:
+            print(
+                f"{contact.name} conduction band edge: {conduction_band_edge:.6f}\n",
+                f"{contact.name} Fermi level: {contact.fermi_level:.6f}",
+                flush=True,
             )
-            mu_left = self.left_fermi_level - self.left_voltage
-            self.left_occupancies = fermi_dirac(
-                self.local_energies - mu_left, self.left_temperature
-            )
-            if (comm.block.rank == 0) and (comm.stack.rank == 0):
-                print(
-                    f"Left condunction band edge: {left_conduction_band_edge:.6f}\n",
-                    f"Left Fermi level: {self.left_fermi_level:.6f}",
-                    flush=True,
-                )
-
-        if right_band_edges is not None:
-            self.right_mid_gap_energy = xp.mean(right_band_edges)
-            __, right_conduction_band_edge = right_band_edges
-            self.right_fermi_level = (
-                right_conduction_band_edge
-                - self.right_delta_fermi_level_conduction_band
-            )
-            mu_right = self.right_fermi_level - self.right_voltage
-            self.right_occupancies = fermi_dirac(
-                self.local_energies - mu_right, self.right_temperature
-            )
-            if (comm.block.rank == comm.block.size - 1) and (comm.stack.rank == 0):
-                print(
-                    f"Right condunction band edge: {right_conduction_band_edge:.6f}\n",
-                    f"Right Fermi level: {self.right_fermi_level:.6f}",
-                    flush=True,
-                )
 
     def _compute_contact_obc(
         self,
-        contact: str,
-        diagonal_inds: tuple,
-        upper_inds: tuple,
+        contact: SCBAContact,
+        contact_str: str,
         occupancies: NDArray,
-        order: str | NDArray | None = None,
     ) -> tuple[NDArray, NDArray, NDArray]:
         """Computes the OBC for a specific contact.
 
         Parameters
         ----------
-        contact : str
+        contact : SCBAContact
+            The contact for which to compute the OBC.
+        contact_str : str
             The contact for which to compute the OBC.
             Used for profiling and caching purposes.
-        diagonal_inds : tuple
-            The indices of the diagonal blocks corresponding to the contact.
-        upper_inds : tuple
-            The indices of the upper off-diagonal blocks corresponding to the contact.
         occupancies : NDArray
             The occupancies of the contact at the local energies.
-        order : str | NDArray | None, optional
-            The permutation of the blocks to achieve the same order as the canonical left contact.
-            If None, the left contact order is assumed.
-            Instead of an explicit permutation, the string "reverse" can be passed
-            to reverse the order of the blocks, which is equivalent to the right contact order.
 
         Returns
         -------
@@ -980,7 +688,11 @@ class ElectronSolver(SubsystemSolver):
             The greater OBC for the contact.
 
         """
-
+        obc_solver = contact.obc_solvers["electron"]
+        order = contact.order
+        block_sections = contact.transport_repetitions
+        diagonal_inds = contact.diagonal_inds
+        upper_inds = contact.upper_inds
         inverse_order = get_inverse_order(order)
 
         m_10, m_00, m_01 = periodize_layer(
@@ -989,23 +701,29 @@ class ElectronSolver(SubsystemSolver):
                 order_block(self.system_matrix.blocks[*diagonal_inds], order),
                 order_block(self.system_matrix.blocks[*upper_inds], order),
             ),
-            block_sections=self.block_sections,
+            block_sections=block_sections,
         )
 
-        if self.overlap is None:
+        if self.device.overlap_matrices is None:
             s_10 = xp.zeros_like(m_10, dtype=m_10.dtype)
             s_00 = 1j * self.eta_obc * xp.eye(m_00.shape[-1], dtype=m_00.dtype)
             s_01 = xp.zeros_like(m_01, dtype=m_01.dtype)
         else:
             # Extract the overlap matrix blocks.
-            s_10 = 1j * self.eta_obc * self.overlap.blocks[*upper_inds[::-1]]
-            s_00 = 1j * self.eta_obc * self.overlap.blocks[*diagonal_inds]
-            s_01 = 1j * self.eta_obc * self.overlap.blocks[*upper_inds]
+            s_10 = (
+                1j
+                * self.eta_obc
+                * self.device.overlap_matrices.blocks[*upper_inds[::-1]]
+            )
+            s_00 = (
+                1j * self.eta_obc * self.device.overlap_matrices.blocks[*diagonal_inds]
+            )
+            s_01 = 1j * self.eta_obc * self.device.overlap_matrices.blocks[*upper_inds]
 
         # TODO: use residuals to filter "bad" energies
-        g_00, *__ = self.obc(
+        g_00, *__ = obc_solver(
             (m_10 + s_10, m_00 + s_00, m_01 + s_01),
-            contact="G: " + contact,
+            contact="G: " + contact_str,
         )
         # Apply the retarded boundary self-energy.
         sigma_00 = m_10 @ g_00 @ m_01
@@ -1032,30 +750,17 @@ class ElectronSolver(SubsystemSolver):
             The slice of the energy stack corresponding to the current batch.
 
         """
-        if comm.block.rank == 0:
-            obc_retarded, obc_lesser, obc_greater = self._compute_contact_obc(
-                contact="left-" + str(batch_slice),
-                diagonal_inds=(0, 0),
-                upper_inds=(0, 1),
-                occupancies=self.left_occupancies[batch_slice],
-            )
-            self.obc_blocks.retarded[0] = obc_retarded
-            self.obc_blocks.lesser[0] = obc_lesser
-            self.obc_blocks.greater[0] = obc_greater
-
-        if comm.block.rank == comm.block.size - 1:
-            n = self.hamiltonian.num_local_blocks - 1
-            m = n - 1
-            obc_retarded, obc_lesser, obc_greater = self._compute_contact_obc(
-                contact="right-" + str(batch_slice),
-                diagonal_inds=(n, n),
-                upper_inds=(n, m),
-                occupancies=self.right_occupancies[batch_slice],
-                order="reverse",
-            )
-            self.obc_blocks.retarded[-1] = obc_retarded
-            self.obc_blocks.lesser[-1] = obc_lesser
-            self.obc_blocks.greater[-1] = obc_greater
+        for contact in self.device.contacts:
+            if comm.block.rank == contact.owning_rank:
+                obc_retarded, obc_lesser, obc_greater = self._compute_contact_obc(
+                    contact=contact,
+                    contact_str=f"{contact.name}-" + str(batch_slice),
+                    occupancies=self.occupancies[contact][batch_slice],
+                )
+                idx = contact.diagonal_inds[0]
+                self.obc_blocks.retarded[idx] = obc_retarded
+                self.obc_blocks.lesser[idx] = obc_lesser
+                self.obc_blocks.greater[idx] = obc_greater
 
     @profiler.profile(label="ElectronSolver: Assemble", level="default", comm=comm)
     def _assemble_system_matrix(
@@ -1083,9 +788,11 @@ class ElectronSolver(SubsystemSolver):
             stack_shape=sse_lesser.local_stack_shape,
             stack_index=(...,),
             energies=self.local_energies[batch_slice] + 1j * self.eta,
-            hamiltonian=self.hamiltonian,
-            overlap=self.overlap,
-            potential=self.potential[self.hamiltonian.global_block_offset :],
+            hamiltonian=self.device.hamiltonians,
+            overlap=self.device.overlap_matrices,
+            potential=self.device.potential[
+                self.device.hamiltonians.global_block_offset :
+            ],
             sse_lesser=sse_lesser,
             sse_greater=sse_greater,
             sse_retarded_hermitian=sse_retarded_hermitian,
@@ -1094,9 +801,11 @@ class ElectronSolver(SubsystemSolver):
             stack_shape=sse_lesser.local_stack_shape,
             stack_index=(...,),
             energies=self.local_energies[batch_slice] + 1j * self.eta,
-            hamiltonian=self.hamiltonian,
-            overlap=self.overlap,
-            potential=self.potential[self.hamiltonian.global_block_offset :],
+            hamiltonian=self.device.hamiltonians,
+            overlap=self.device.overlap_matrices,
+            potential=self.device.potential[
+                self.device.hamiltonians.global_block_offset :
+            ],
         )
 
     def _filter_peaks(self, out: tuple[DSDBSparse, ...]) -> None:
@@ -1177,45 +886,26 @@ class ElectronSolver(SubsystemSolver):
             with profiler.profile_range(
                 label="ElectronSolver: Band edges", level="default", comm=comm
             ):
-                left_band_edges = xp.empty(2, dtype=float)
-                right_band_edges = xp.empty(2, dtype=float)
-
-                if comm.block.rank == 0:
-                    left_band_edges = find_renormalized_eigenvalues(
-                        hamiltonian=self.hamiltonian,
-                        overlap=self.overlap,
-                        potential=self.potential,
-                        sigma_retarded_hermitian=sse_retarded_hermitian,
-                        energies=self.energies,
-                        conduction_band_guess=self.left_fermi_level
-                        + self.left_delta_fermi_level_conduction_band,
-                        mid_gap_energy=self.left_mid_gap_energy,
-                        diagonal_inds=(0, 0),
-                        upper_inds=(0, 1),
-                        band_edge_config=self.config.compute.band_edge,
-                    )
-                comm.block.bcast(left_band_edges, root=0)
-
-                if comm.block.rank == comm.block.size - 1:
-                    n = self.hamiltonian.num_local_blocks - 1
-                    m = n - 1
-                    right_band_edges = find_renormalized_eigenvalues(
-                        hamiltonian=self.hamiltonian,
-                        overlap=self.overlap,
-                        potential=self.potential,
-                        sigma_retarded_hermitian=sse_retarded_hermitian,
-                        energies=self.energies,
-                        conduction_band_guess=self.right_fermi_level
-                        + self.right_delta_fermi_level_conduction_band,
-                        mid_gap_energy=self.right_mid_gap_energy,
-                        diagonal_inds=(n, n),
-                        upper_inds=(n, m),
-                        order="reverse",
-                        band_edge_config=self.config.compute.band_edge,
-                    )
-                comm.block.bcast(right_band_edges, root=comm.block.size - 1)
-
-                self._update_fermi_levels(left_band_edges, right_band_edges)
+                for contact in self.device.contacts:
+                    band_edges = xp.empty(2, dtype=float)
+                    if comm.block.rank == contact.owning_rank:
+                        band_edges = find_renormalized_eigenvalues(
+                            hamiltonian=self.device.hamiltonians,
+                            overlap=self.device.overlap_matrices,
+                            potential=self.device.potential,
+                            sigma_retarded_hermitian=sse_retarded_hermitian,
+                            energies=self.energies,
+                            conduction_band_guess=contact.fermi_level
+                            + self.delta_fermi_level_conduction_band[contact],
+                            mid_gap_energy=contact.mid_gap_energy,
+                            diagonal_inds=contact.diagonal_inds,
+                            upper_inds=contact.upper_inds,
+                            order=contact.order,
+                            block_sections=contact.transport_repetitions,
+                            band_edge_config=self.config.compute.band_edge,
+                        )
+                    comm.block.bcast(band_edges, root=contact.owning_rank)
+                    self._update_fermi_level(contact, band_edges)
 
         if self.max_batch_size is None:
             max_batch_size = sse_lesser.shape[0]

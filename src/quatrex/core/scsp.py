@@ -10,6 +10,7 @@ from qttools.comm import comm
 from quatrex.core.config import QuatrexConfig, SCSPConfig
 from quatrex.core.qtbm import QTBM
 from quatrex.core.transport import TransportSolver
+from quatrex.device import BaseDevice
 from quatrex.electrostatics.electrostatics import ElectrostaticSolver
 from quatrex.electrostatics.mixer import DIIS, Mixer, UnderRelaxation
 
@@ -28,22 +29,33 @@ class SCSP:
         The configuration object containing all the necessary parameters
         for setting up and running the SCSP solver, including parameters
         for the electrostatic solver, transport solver, and mixer.
+    device : BaseDevice
+        The device object representing the physical system to be solved,
+        including its geometry, material properties, and boundary
+        conditions.
 
     """
 
-    def __init__(self, config: QuatrexConfig):
+    def __init__(
+        self,
+        config: QuatrexConfig,
+        device: BaseDevice,
+    ):
         """Initializes the SCSP solver."""
         self.config = config
+        self.device = device
 
-        self.transport_solver = self._configure_transport_solver(config)
-        self.electrostatic_solver = ElectrostaticSolver(config, self.transport_solver)
+        self.transport_solver = self._configure_transport_solver(config, device)
+        self.electrostatic_solver = ElectrostaticSolver(config, device)
 
         self.mixer = self._configure_mixer(config.scsp)
 
         self.convergence_tol = config.scsp.convergence_tol
 
     @staticmethod
-    def _configure_transport_solver(config: QuatrexConfig) -> TransportSolver:
+    def _configure_transport_solver(
+        config: QuatrexConfig, device: BaseDevice
+    ) -> TransportSolver:
         """Configures the transport solver.
 
         Parameters
@@ -54,6 +66,10 @@ class SCSP:
             the choice of transport formalism (e.g., wavefunction-based
             or NEGF) and any relevant parameters for the chosen
             formalism.
+        device : BaseDevice
+            The device object representing the physical system to be
+            solved, including its geometry, material properties, and
+            boundary conditions.
 
         Returns
         -------
@@ -67,16 +83,13 @@ class SCSP:
         """
         if config.formalism == "wf":
             from quatrex.core.qtbm import QTBM
-            from quatrex.device import Device
 
-            device = Device(config)
-            device.validate_contacts()
-            return QTBM(device, config)
+            return QTBM(config, device)
 
         if config.formalism == "negf":
             from quatrex.core.scba import SCBA
 
-            return SCBA(config)
+            return SCBA(config, device)
 
         raise ValueError(f"Unknown transport formalism: {config.formalism}.")
 
@@ -128,7 +141,9 @@ class SCSP:
                 # re-initialized at each iteration. The issue was that
                 # it is a bit harder to reset the observables
                 # after they have been allgathered in place.
-                self.transport_solver = self._configure_transport_solver(self.config)
+                self.transport_solver = self._configure_transport_solver(
+                    self.config, self.device
+                )
 
             if comm.rank == 0:
                 np.save(

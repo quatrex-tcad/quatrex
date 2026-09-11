@@ -86,7 +86,7 @@ get a contact definition as follows:
 name = "left"
 origin = [0.1551, 0.0, 0.0]
 lattice_vectors = [[4.27615261, 0, 0], [0, 50, 0], [0, 0, 50]]
-direction = "a"
+transport_direction = "a"
 fermi_level = -3.6
 ```
 
@@ -98,7 +98,7 @@ set
 name = "right"
 origin = [102.694, 0.0, 0.0]
 lattice_vectors = [[-4.27615261, 0, 0], [0, 50, 0], [0, 0, 50]]
-direction = "a"
+transport_direction = "a"
 fermi_level = -3.601
 ```
 
@@ -134,14 +134,14 @@ since this is a very small system, we choose the `#!toml obc.nevp_solver
         name = "left"
         origin = [0.1551, 0.0, 0.0]
         lattice_vectors = [[4.27615261, 0, 0], [0, 50, 0], [0, 0, 50]]
-        direction = "a"
+        transport_direction = "a"
         fermi_level = -3.6
 
         [[device.contacts]]
         name = "right"
         origin = [102.694, 0.0, 0.0]
         lattice_vectors = [[-4.27615261, 0, 0], [0, 50, 0], [0, 0, 50]]
-        direction = "a"
+        transport_direction = "a"
         fermi_level = -3.601
 
     [electron]
@@ -187,21 +187,13 @@ mixing_factor = 1.0
 phonon = true
 ```
 
-!!! warning "Differences between `"wf"` and `"negf"` inputs"
-    Currently, an important difference between simulations employing the
-    `"wf"` formalism and those using `"negf"` is the way the contacts
-    are defined in the config:
-
-    - In `"wf"` simulations they are inferred from real-space contact cell
-    definitions ([`[[device.contacts]]`](../parameters/contact.md)) and more
-    than two contacts are supported
-    - In `"negf"` calculations, contact matrix elements are taken from a user-prescribed
-    block-tiling ([`block_size`](../parameters/device/#block_size)) and only
-    two-terminal devices can be treated.
-
-    The reason for this is that the two formalisms were implemented more
-    or less independently of one another. We are actively working on
-    further consolidating input files.
+!!! note "Differences between `"wf"` and `"negf"` contacts"
+    Currently, `"negf"` supports the same contact definition as `"wf"`,
+    but the contact definition is not yet as flexible as in `"wf"`. In
+    particular, it is checked that the contacts for `"negf"` are
+    contiguous and that the number of orbitals match the block size.
+    Furthermore, only two contacts are supported for `"negf"` at the
+    moment.
 
 As stated above, the full structure, encompassing 768 Wannier orbitals,
 is made up of 24 transport cells that contain 32 orbitals each. The
@@ -242,13 +234,21 @@ deformation_potential = 15e-3 # eV
     transport_direction = "a"
     block_size = 32
 
+        [[device.contacts]]
+        name = "left"
+        origin = [0.1551, 0.0, 0.0]
+        lattice_vectors = [[4.27615261, 0, 0], [0, 50, 0], [0, 0, 50]]
+        transport_direction = "a"
+        fermi_level = -3.6
+
+        [[device.contacts]]
+        name = "right"
+        origin = [102.694, 0.0, 0.0]
+        lattice_vectors = [[-4.27615261, 0, 0], [0, 50, 0], [0, 0, 50]]
+        transport_direction = "a"
+        fermi_level = -3.601
+
     [electron]
-    left_contact.name = "left"
-    left_contact.fermi_level = -3.6
-
-    right_contact.name = "right"
-    right_contact.fermi_level = -3.601
-
     energy_window_min = -6.5
     energy_window_max = -1.0
     energy_window_num = 1000
