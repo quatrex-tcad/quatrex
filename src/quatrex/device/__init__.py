@@ -12,6 +12,22 @@ def create_device(
     config: QuatrexConfig,
     validate_contacts: bool = True,
 ) -> QTBMDevice | SCBADevice:
+    """Creates a device object based on the configuration.
+
+    Parameters
+    ----------
+    config : QuatrexConfig
+        The main quatrex configuration.
+    validate_contacts : bool, optional
+        Whether to validate the contacts after creation, by default
+        True.
+
+    Returns
+    -------
+    QTBMDevice | SCBADevice
+        The created device object.
+
+    """
     if config.formalism == "wf":
         device = QTBMDevice(config)
     elif config.formalism == "negf":
@@ -25,4 +41,9 @@ def create_device(
     return device
 
 
-__all__ = ["create_device", "BaseDevice", "QTBMDevice", "SCBADevice"]
+__all__ = [
+    "BaseDevice",
+    "QTBMDevice",
+    "SCBADevice",
+    "create_device",
+]
