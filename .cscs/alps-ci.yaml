@@ -41,7 +41,7 @@ build quatrex:
     SLURM_JOB_NUM_NODES: 1
     SLURM_NTASKS: 1
     SLURM_GPUS_PER_TASK: 1
-    SLURM_TIMELIMIT: '00:10:00'
+    SLURM_TIMELIMIT: '00:15:00'
     SLURM_PARTITION: normal
 
 test quatrex single:
