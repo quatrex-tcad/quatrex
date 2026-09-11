@@ -84,47 +84,34 @@ RUN wget -q http://mvapich.cse.ohio-state.edu/download/mvapich/osu-micro-benchma
 RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.13 1 \
     && python3 -m ensurepip --upgrade
 
+# Install cuDSS and build a commlayer for it.
+RUN wget https://developer.download.nvidia.com/compute/cudss/redist/libcudss/linux-sbsa/libcudss-linux-sbsa-0.8.0.10_cuda12-archive.tar.xz \
+    && tar -xf libcudss-linux-sbsa-0.8.0.10_cuda12-archive.tar.xz \
+    && cp -a libcudss-linux-sbsa-0.8.0.10_cuda12-archive/lib/libcudss.* /usr/local/lib/ \
+    && cp -a libcudss-linux-sbsa-0.8.0.10_cuda12-archive/include/. /usr/local/include/ \
+    && cd libcudss-linux-sbsa-0.8.0.10_cuda12-archive/src \
+    && export CUDA_PATH=/usr/local/cuda CUDSS_PATH=./.. MPI_PATH=/usr/local/mpich \
+    # Not actually OpenMPI, but the build script expects it to be called that way.
+    && bash ./cudss_build_commlayer.sh openmpi \
+    && mv libcudss_commlayer_openmpi.so /usr/local/lib \
+    && ldconfig \
+    && cd ../.. \
+    && rm -rf libcudss-linux-sbsa-0.8.0.10_cuda12-archive libcudss-linux-sbsa-0.8.0.10_cuda12-archive.tar.xz
+
+ENV CUDSS_COMM_LIB=/usr/local/lib/libcudss_commlayer_openmpi.so
+
 # Install Python dependencies.
 RUN python3 -m venv /opt/venv \
     && . /opt/venv/bin/activate \
     && python3 -m pip install numpy scipy h5py \
     && python3 -m pip install --no-binary=mpi4py mpi4py \
-    && python3 -m pip install cupy \
+    && python3 -m pip install cupy-cuda12x \
     && python3 -m pip install numba pydantic matplotlib threadpoolctl typer \
     && python3 -m pip install pytest pytest-mpi pytest-cov pytest-xdist \
-    && python3 -m pip install nvmath-python==0.9 \
-    && python3 -m pip install nvidia-cudss-cu12==0.7.1.6 \
+    && python3 -m pip install nvmath-python \
     && python3 -m pip install ase meshio scikit-fem pyvista \
     && python3 -m pip install tomlkit
 
 # Get rid of the stubs libraries, because at runtime the CUDA driver and
 # libraries will be available
 RUN rm /etc/ld.so.conf.d/cuda_stubs.conf && ldconfig
-
-# Install Gmsh from source
-# as pip does not have a wheel for aarch64
-# other option would be to install from conda-forge
-RUN git clone https://gitlab.onelab.info/gmsh/gmsh.git \
-    && mkdir gmsh/build \
-    && cd gmsh/build \
-    && cmake -DCMAKE_BUILD_TYPE=Release \
-             -DENABLE_BUILD_SHARED=ON \
-             -DENABLE_BUILD_DYNAMIC=ON \
-             -DENABLE_FLTK=OFF \
-             -DENABLE_GRAPHICS=OFF \
-             .. \
-    && make -j$(nproc) \
-    && make install \
-    && ldconfig \
-    && cd / \
-    && rm -rf gmsh
-
-# Formalize the Gmsh Python installation so Pip registers it in the venv
-RUN mkdir -p dummy_gmsh \
-    && cd dummy_gmsh \
-    && cp /usr/local/lib/gmsh.py . \
-    && printf "from setuptools import setup\nsetup(name='gmsh', version='4.13.1', py_modules=['gmsh'])\n" > setup.py \
-    && . /opt/venv/bin/activate \
-    && python3 -m pip install . \
-    && cd / \
-    && rm -rf dummy_gmsh
