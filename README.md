@@ -29,7 +29,7 @@
 | src/qttools/fft/ffts.py                                     |       28 |        1 |     96% |         8 |
 | src/qttools/greens\_function\_solver/\_\_init\_\_.py        |        5 |        0 |    100% |           |
 | src/qttools/greens\_function\_solver/\_serinv.py            |      546 |        8 |     99% |891-899, 997-1004 |
-| src/qttools/greens\_function\_solver/inv.py                 |       63 |       53 |     16% |33, 59-83, 129-189 |
+| src/qttools/greens\_function\_solver/inv.py                 |       63 |       53 |     16% |33, 59-83, 126-186 |
 | src/qttools/greens\_function\_solver/rgf.py                 |      145 |       31 |     79% |53-109, 161, 172, 176, 181 |
 | src/qttools/greens\_function\_solver/rgf\_dist.py           |       79 |       30 |     62% |56-125, 180, 184, 189 |
 | src/qttools/greens\_function\_solver/solver.py              |       32 |        0 |    100% |           |
@@ -88,34 +88,39 @@
 | src/quatrex/\_\_about\_\_.py                                |        1 |        0 |    100% |           |
 | src/quatrex/\_\_init\_\_.py                                 |        2 |        0 |    100% |           |
 | src/quatrex/bandstructure/\_\_init\_\_.py                   |        0 |        0 |    100% |           |
-| src/quatrex/bandstructure/band\_edges.py                    |      147 |       41 |     72% |20-23, 42-43, 101, 150-151, 250, 253, 300-335, 345, 350, 445-447, 453-455, 552-560 |
+| src/quatrex/bandstructure/band\_edges.py                    |      147 |       41 |     72% |20-23, 42-43, 101, 150-151, 250, 253, 300-335, 345, 350, 448-450, 456-458, 555-563 |
 | src/quatrex/bandstructure/contact.py                        |       47 |        2 |     96% |  134, 179 |
 | src/quatrex/cli/\_\_init\_\_.py                             |        2 |        0 |    100% |           |
-| src/quatrex/cli/main.py                                     |      131 |       55 |     58% |44-46, 138-140, 147-149, 170-189, 241, 248-251, 277-303, 333-348, 364, 369 |
+| src/quatrex/cli/main.py                                     |      130 |       55 |     58% |44-46, 141-143, 150-152, 173-192, 247, 254-257, 283-309, 339-354, 370, 375 |
 | src/quatrex/config/\_\_init\_\_.py                          |        2 |        0 |    100% |           |
 | src/quatrex/config/merge.py                                 |       24 |       21 |     12% |     38-83 |
+| src/quatrex/contact/\_\_init\_\_.py                         |        4 |        0 |    100% |           |
+| src/quatrex/contact/base.py                                 |       80 |        4 |     95% |97, 121, 182, 219 |
+| src/quatrex/contact/discovery.py                            |      130 |       12 |     91% |163, 322, 326, 563, 620, 625, 627, 647, 739, 743, 750, 778 |
+| src/quatrex/contact/qtbm.py                                 |      209 |        5 |     98% |76, 546, 684, 704, 752 |
+| src/quatrex/contact/scba.py                                 |      141 |       24 |     83% |45, 47, 53, 79, 81, 87, 109, 111, 117, 260, 269-274, 290, 299, 314, 332, 384, 407, 450, 469, 499-506, 554 |
 | src/quatrex/core/\_\_init\_\_.py                            |        0 |        0 |    100% |           |
-| src/quatrex/core/config.py                                  |      702 |       64 |     91% |1235, 1242, 1260, 1268, 1428, 1525, 1669-1686, 1841, 1857, 1865, 1873, 1881, 1890, 1896, 1902, 1920-1921, 1927, 2093-2097, 2102-2114, 2250-2252, 2377-2383, 2397-2401, 2413-2414, 2432, 2437, 2452, 2457, 2460, 2463, 2477, 2481, 2485, 2502, 2515, 2537 |
+| src/quatrex/core/config.py                                  |      686 |       61 |     91% |1167, 1175, 1335, 1432, 1576-1593, 1748, 1771, 1779, 1789, 1808, 1816, 1823, 1827, 1830, 1836, 1852-1853, 1859, 2021-2025, 2030-2042, 2178-2180, 2305-2311, 2325-2329, 2341-2342, 2360, 2365, 2377, 2380, 2393, 2406, 2420, 2432, 2454 |
 | src/quatrex/core/constants.py                               |        9 |        0 |    100% |           |
 | src/quatrex/core/observables.py                             |       32 |        1 |     97% |        41 |
-| src/quatrex/core/qtbm.py                                    |      447 |       38 |     91% |106, 153-158, 207, 211, 213, 215, 219, 321, 369, 462-464, 500, 739-741, 969-977, 991-999, 1144, 1234 |
-| src/quatrex/core/scba.py                                    |      375 |       57 |     85% |68, 78, 151, 177, 180, 308, 351-355, 360-364, 468, 484, 663, 681-715, 726-729, 743-750, 800, 823-825, 831-844 |
-| src/quatrex/core/scsp.py                                    |       57 |       12 |     79% |76-81, 104-113, 120, 146-149 |
+| src/quatrex/core/qtbm.py                                    |      445 |       38 |     91% |107, 154-159, 208, 212, 214, 216, 220, 322, 370, 463-465, 501, 740-742, 970-978, 992-1000, 1145, 1235 |
+| src/quatrex/core/scba.py                                    |      347 |       54 |     84% |123, 126, 250, 292-296, 301-305, 411, 427, 606, 624-658, 669-672, 686-693, 743, 766-768, 774-787 |
+| src/quatrex/core/scsp.py                                    |       56 |       12 |     79% |89-94, 117-126, 133, 161-164 |
 | src/quatrex/core/sse.py                                     |        4 |        0 |    100% |           |
 | src/quatrex/core/statistics.py                              |        6 |        0 |    100% |           |
-| src/quatrex/core/subsystem.py                               |       53 |       10 |     81% |80, 99, 120, 139, 182-189, 229-232 |
+| src/quatrex/core/subsystem.py                               |       26 |        3 |     88% |     70-73 |
 | src/quatrex/core/transport.py                               |        9 |        0 |    100% |           |
 | src/quatrex/core/utils.py                                   |       32 |       12 |     62% |49-51, 62, 117-131 |
 | src/quatrex/coulomb\_screening/\_\_init\_\_.py              |        3 |        0 |    100% |           |
 | src/quatrex/coulomb\_screening/polarization.py              |       89 |       29 |     67% |20, 44-57, 127, 141-161, 193, 215 |
-| src/quatrex/coulomb\_screening/solver.py                    |      241 |        8 |     97% |77, 83, 95, 171, 838-845 |
-| src/quatrex/device/\_\_init\_\_.py                          |        3 |        0 |    100% |           |
-| src/quatrex/device/contact.py                               |      299 |       17 |     94% |83, 123, 125, 131, 157, 159, 165, 187, 189, 195, 262, 286, 354, 395, 415, 459, 1013 |
-| src/quatrex/device/contact\_discovery.py                    |      130 |       12 |     91% |163, 322, 326, 563, 620, 625, 627, 647, 744, 748, 755, 783 |
-| src/quatrex/device/device.py                                |      107 |       12 |     89% |147, 183, 239, 247, 254, 265-266, 278, 284, 292, 302-303 |
+| src/quatrex/coulomb\_screening/solver.py                    |      233 |        5 |     98% |86, 770-777 |
+| src/quatrex/device/\_\_init\_\_.py                          |       14 |        1 |     93% |        36 |
+| src/quatrex/device/base.py                                  |       64 |        2 |     97% |  154, 190 |
 | src/quatrex/device/inputs.py                                |      202 |       20 |     90% |56, 64, 170, 178, 180, 182, 185, 209, 322, 326, 444, 455, 463, 472, 489, 494, 552-553, 602, 672 |
+| src/quatrex/device/qtbm.py                                  |       58 |       10 |     83% |110, 118, 125, 136-137, 149, 155, 163, 173-174 |
+| src/quatrex/device/scba.py                                  |       77 |        6 |     92% |134, 158, 168, 201, 213, 224 |
 | src/quatrex/electron/\_\_init\_\_.py                        |        6 |        0 |    100% |           |
-| src/quatrex/electron/solver.py                              |      374 |       25 |     93% |263, 349, 353, 360, 367, 374, 378, 382, 385, 390, 557, 606, 625, 642, 649, 788, 792, 829, 878-892, 1169-1174 |
+| src/quatrex/electron/solver.py                              |      285 |       16 |     94% |255, 341, 345, 352, 359, 366, 370, 374, 377, 382, 549, 591, 878-883 |
 | src/quatrex/electron/sse\_coulomb\_screening.py             |      119 |       18 |     85% |20, 330-351 |
 | src/quatrex/electron/sse\_fock.py                           |       26 |        0 |    100% |           |
 | src/quatrex/electron/sse\_phonon.py                         |       35 |        3 |     91% |32, 36, 51 |
@@ -124,7 +129,7 @@
 | src/quatrex/electrostatics/\_params.py                      |       12 |        0 |    100% |           |
 | src/quatrex/electrostatics/assembly.py                      |       73 |       42 |     42% |39, 45-46, 52, 62-65, 149-189, 226-273 |
 | src/quatrex/electrostatics/density\_response.py             |       61 |       26 |     57% |35-44, 65-76, 117-126, 148-156, 172-184, 201-214 |
-| src/quatrex/electrostatics/electrostatics.py                |      117 |       43 |     63% |72, 110-116, 132-138, 198, 212, 248-282, 303-345 |
+| src/quatrex/electrostatics/electrostatics.py                |      101 |       29 |     71% |70, 117-123, 183, 197, 234-242, 263-305 |
 | src/quatrex/electrostatics/fermi\_integrals.py              |      117 |       59 |     50% |42, 80, 84, 148-157, 178-220, 255-256, 261-262, 267-268, 273-274, 279-282, 333, 337, 341, 344, 349-356 |
 | src/quatrex/electrostatics/geometry\_config.py              |      142 |       21 |     85% |212, 217, 256, 331-338, 374-382, 386, 391, 401, 417, 420, 443 |
 | src/quatrex/electrostatics/meshing.py                       |      327 |      239 |     27% |15-16, 54-59, 76-83, 103-111, 132-141, 163-180, 206-213, 236-239, 263-269, 319-345, 370-375, 396-403, 425-430, 471, 487, 502-512, 527-533, 552-562, 580-625, 638-699, 723-724, 743-886, 901-942 |
@@ -142,10 +147,10 @@
 | src/quatrex/post\_processing/\_\_init\_\_.py                |        2 |        2 |      0% |       5-7 |
 | src/quatrex/post\_processing/plot\_ldos.py                  |       14 |       14 |      0% |      5-35 |
 | src/quatrex/pre\_processsing/\_\_init\_\_.py                |        2 |        2 |      0% |       5-7 |
-| src/quatrex/pre\_processsing/contact\_bandstructure.py      |      102 |      102 |      0% |     5-292 |
-| src/quatrex/pre\_processsing/contact\_fermi\_level.py       |       41 |       41 |      0% |     5-127 |
-| src/quatrex/pre\_processsing/pre\_process.py                |       15 |       15 |      0% |      5-39 |
-| **TOTAL**                                                   | **9474** | **2589** | **73%** |           |
+| src/quatrex/pre\_processsing/contact\_bandstructure.py      |       58 |       58 |      0% |     5-174 |
+| src/quatrex/pre\_processsing/contact\_fermi\_level.py       |       34 |       34 |      0% |     5-114 |
+| src/quatrex/pre\_processsing/pre\_process.py                |       13 |       13 |      0% |      5-39 |
+| **TOTAL**                                                   | **9471** | **2520** | **73%** |           |
 
 
 ## Setup coverage badge
