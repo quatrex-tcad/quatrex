@@ -602,6 +602,10 @@ class ElectronSolver(SubsystemSolver):
         self.occupancies = {}
         for contact in self.device.contacts:
             if self.band_edge_tracking:
+                # TODO: The conduction band edge that gets computed from
+                # the contact band structure has a slightly different
+                # meaning from what is used for the band edge tracking.
+                # See issue #352 for more details.
                 self.delta_fermi_level_conduction_band[contact] = (
                     contact.conduction_band_edge - contact.fermi_level
                 )
